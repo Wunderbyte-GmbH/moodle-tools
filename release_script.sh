@@ -111,8 +111,7 @@ git tag -a "$tag" -m "$release"
 
 # Push to the desired branch with tags
 echo "Executing: git push wunderbyte musi_40_allinone --tags"
-git push wunderbyte musi_40_allinone --tags
+git push wunderbyte musi_41_allinone --tags
 
 echo "Executing: git push univie musi_41_allinone --tags"
 git push univie musi_41_allinone --tags
-
