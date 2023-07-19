@@ -7,7 +7,7 @@ read -p "Enter the directory path to execute the commands: " execute_directory
 cd "$execute_directory"
 
 # Switch to the desired branch
-echo "Executing: git switch moodle_401_stable -f"
+echo "Executing: git switch musi_401_stable -f"
 git switch musi_401_stable -f
 
 # Remove the directory
@@ -34,11 +34,11 @@ echo "Executing: git commit --amend"
 git commit --amend
 
 # Push to the desired branch with force
-echo "Executing: git push univie moodle_401_stable -f"
-git push univie moodle_401_stable -f
+echo "Executing: git push univie musi_401_stable -f"
+git push univie musi_401_stable -f
 
-echo "Executing: git push wunderbyte moodle_401_stable -f"
-git push wunderbyte moodle_401_stable -f
+echo "Executing: git push wunderbyte musi_401_stable -f"
+git push wunderbyte musi_401_stable -f
 
 # Prompt for the commit message
 read -p "Enter the commit message: " commit_message
@@ -111,7 +111,7 @@ git tag -a "$tag" -m "$release"
 
 # Push to the desired branch with tags
 echo "Executing: git push wunderbyte musi_40_allinone --tags"
-git push wunderbyte musi_41_allinone --tags
+git push wunderbyte musi_40_allinone --tags
 
 echo "Executing: git push univie musi_41_allinone --tags"
 git push univie musi_41_allinone --tags
