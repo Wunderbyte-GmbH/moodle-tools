@@ -5,6 +5,12 @@ announce_command() {
     "$@"
 }
 
+# Prompt for the directory
+read -p "Enter the directory path where the commands should be executed: " directory
+
+# Change to the specified directory
+announce_command cd "$directory"
+
 # Check git status
 announce_command sudo git status
 
