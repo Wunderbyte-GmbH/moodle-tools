@@ -49,10 +49,15 @@ latest_tags=$(git tag --list "USI*" --sort=-v:refname | head -n 3)
 # Prompt for the tag
 echo "Three latest tags starting with 'USI':"
 echo "$latest_tags"
-read -p "Enter the new tag: " tag
+attempts=0
 
-# Use the default tag if no input provided
-tag=${tag}
+while [[ -z "$releasetag" ]]; do
+    ((attempts++))
+    if ((attempts > 1)); then
+        echo "You must enter a value here. Increase the value of the latest tag: $latest_tags"
+    fi
+    read -p "Enter the new tag: " releasetag
+done
 
 # Archive the repository
 echo "Executing: git archive -o ../release.zip HEAD"
@@ -103,15 +108,15 @@ echo "Executing: git commit -m \"$commit_message\""
 git commit -m "$commit_message"
 
 # Prompt for release name:
-read -p "Enter the new tag: " release
+read -p "Enter additional release information for $releasetag: " releaseinfo
 
 # Create a tag
-echo "Executing: git tag -a \"$tag\" -m \"Release information\""
-git tag -a "$tag" -m "$release"
+echo "Executing: git tag -a \"$releaseinfo\" -m \"Release information\""
+git tag -a "$releasetag" -m "$releaseinfo"
 
 # Push to the desired branch with tags
-echo "Executing: git push wunderbyte musi_40_allinone --tags"
-git push wunderbyte musi_40_allinone --tags
+echo "Executing: git push wunderbyte musi_41_allinone --tags"
+git push wunderbyte musi_41_allinone --tags
 
 echo "Executing: git push univie musi_41_allinone --tags"
 git push univie musi_41_allinone --tags
