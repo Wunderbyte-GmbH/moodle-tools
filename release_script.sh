@@ -1,5 +1,21 @@
 #!/bin/bash
 
+# Check VPN connection status
+echo "Check the VPN connection status..."
+vpn_status=$(f5fpc --info | grep "Connection Status:")
+if [[ "$vpn_status" =~ "Session timed out" ]]; then
+    echo "VPN connection is not active. Exiting..."
+    exit 1
+elif [[ "$vpn_status" =~ "session established" ]]; then
+    echo "VPN connection is active and working."
+else
+    echo "Unable to determine VPN connection status. Exiting..."
+    exit 1
+fi
+
+# If VPN connection is active, proceed with your main script here
+echo "Running main script..."
+
 # Prompt for the directory to execute the commands
 read -p "Enter the directory path to execute the commands: " execute_directory
 
