@@ -45,9 +45,13 @@ if [[ $continue_execution != "y" ]]; then
     exit 0
 fi
 
+# Rebase with upstream Moodle
+git fetch upstream
+git rebase upstream/MOODLE_401_STABLE
+
 # Amend the commit
 echo "Executing: git commit --amend"
-git commit --amend
+git commit --amend  --no-edit
 
 # Push to the desired branch with force
 echo "Executing: git push univie musi_401_stable -f"
