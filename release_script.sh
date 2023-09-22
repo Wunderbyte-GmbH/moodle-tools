@@ -1,5 +1,28 @@
 #!/bin/bash
 
+# Function to calculate the release tag
+calculate_release_tag() {
+  if [ -z "$latest_version" ]; then
+    echo "No existing tags found. Unable to calculate the release tag."
+    exit 1
+  fi
+
+  new_version=$(echo "$latest_version" | awk -F'.' '{print $1"."$2"."($3+1)}')
+  release_tag="USI-v$new_version"
+  echo "$release_tag"
+}
+
+# Function to detect the latest version based on tags
+detect_latest_version() {
+  latest_tags=$(git tag --list "USI-v*" | sort -V | tail -n 1)
+  if [ -z "$latest_tags" ]; then
+    echo "No existing tags found. Assuming default latest version."
+    latest_version=""
+  else
+    latest_version=${latest_tags#"USI-v"}
+  fi
+}
+
 # Check VPN connection status
 echo "Check the VPN connection status..."
 vpn_status=$(f5fpc --info | grep "Connection Status:")
@@ -17,7 +40,14 @@ fi
 echo "Running main script..."
 
 # Prompt for the directory to execute the commands
-read -p "Enter the directory path to execute the commands: " execute_directory
+read -p "Enter the directory path to execute the commands (default: /var/www/html/usi/): " execute_directory
+
+# Use the default value if the user input is empty
+if [ -z "$user_input" ]; then
+  execute_directory="/var/www/html/usi/"
+else
+  execute_directory="$user_input"
+fi
 
 # Change to the specified directory
 cd "$execute_directory"
@@ -71,13 +101,18 @@ echo "Three latest tags starting with 'USI':"
 echo "$latest_tags"
 attempts=0
 
-while [[ -z "$releasetag" ]]; do
-    ((attempts++))
-    if ((attempts > 1)); then
-        echo "You must enter a value here. Increase the value of the latest tag: $latest_tags"
-    fi
-    read -p "Enter the new tag: " releasetag
-done
+# Detect the latest version based on existing tags
+detect_latest_version
+
+# Initialize release tag
+releasetag=""
+
+# Prompt the user for a release tag until a valid one is provided
+read -p "Enter the new tag, leave empty for default. (default: $latest_version): " releasetag
+
+if [ -z "$releasetag" ]; then
+  releasetag=$(calculate_release_tag)
+fi
 
 # Archive the repository
 echo "Executing: git archive -o ../release.zip HEAD"
@@ -127,12 +162,9 @@ git add .
 echo "Executing: git commit -m \"$commit_message\""
 git commit -m "$commit_message"
 
-# Prompt for release name:
-read -p "Enter additional release information for $releasetag: " releaseinfo
-
 # Create a tag
 echo "Executing: git tag -a \"$releaseinfo\" -m \"Release information\""
-git tag -a "$releasetag" -m "$releaseinfo"
+git tag -a "$releasetag" -m "$commit_message"
 
 # Push to the desired branch with tags
 echo "Executing: git push wunderbyte musi_41_allinone --tags"
