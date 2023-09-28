@@ -7,7 +7,18 @@ calculate_release_tag() {
     exit 1
   fi
 
-  new_version=$(echo "$latest_version" | awk -F'.' '{print $1"."$2"."($3+1)}')
+  # Split the version string into major, minor, and patch components
+  IFS='.' read -ra version_parts <<< "$latest_version"
+  major="${version_parts[0]}"
+  minor="${version_parts[1]}"
+  patch="${version_parts[2]}"
+
+  # Increment the minor version and reset the patch to 0
+  new_minor=$((minor + 1))
+  new_patch=0
+
+  # Construct the new version string
+  new_version="$major.$new_minor.$new_patch"
   calculated_tag="USI-v$new_version"
   echo "$calculated_tag"
 }
