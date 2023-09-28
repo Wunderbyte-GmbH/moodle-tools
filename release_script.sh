@@ -8,8 +8,8 @@ calculate_release_tag() {
   fi
 
   new_version=$(echo "$latest_version" | awk -F'.' '{print $1"."$2"."($3+1)}')
-  release_tag="USI-v$new_version"
-  echo "$release_tag"
+  calculated_tag="USI-v$new_version"
+  echo "$calculated_tag"
 }
 
 # Function to detect the latest version based on tags
@@ -108,7 +108,7 @@ detect_latest_version
 releasetag=""
 
 # Prompt the user for a release tag until a valid one is provided
-read -p "Enter the new tag, leave empty for default. (default: $releasetag): " releasetag
+read -p "Enter the new tag, leave empty for default. (default: $calculated_tag): " releasetag
 
 if [ -z "$releasetag" ]; then
   releasetag=$(calculate_release_tag)
