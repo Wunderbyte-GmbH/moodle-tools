@@ -43,10 +43,10 @@ echo "Running main script..."
 read -p "Enter the directory path to execute the commands (default: /var/www/html/usi/): " execute_directory
 
 # Use the default value if the user input is empty
-if [ -z "$user_input" ]; then
+if [ -z "$execute_directory" ]; then
   execute_directory="/var/www/html/usi/"
 else
-  execute_directory="$user_input"
+  execute_directory="$execute_directory"
 fi
 
 # Change to the specified directory
@@ -164,7 +164,7 @@ echo "Executing: git commit -m \"$commit_message\""
 git commit -m "$commit_message"
 
 # Create a tag
-echo "Executing: git tag -a \"$releaseinfo\" -m \"Release information\""
+echo "Executing: git tag -a \"$releasetag\" -m \"Release information\""
 git tag -a "$releasetag" -m "$commit_message"
 
 # Push to the desired branch with tags
