@@ -108,7 +108,7 @@ detect_latest_version
 releasetag=""
 
 # Prompt the user for a release tag until a valid one is provided
-read -p "Enter the new tag, leave empty for default. (default: $latest_version): " releasetag
+read -p "Enter the new tag, leave empty for default. (default: $releasetag): " releasetag
 
 if [ -z "$releasetag" ]; then
   releasetag=$(calculate_release_tag)
