@@ -127,6 +127,23 @@ if [ -z "$releasetag" ]; then
 fi
 
 # Archive the repository
+# Get the parent directory of the script's location
+parent_directory="$(dirname "$(realpath "$0")")"
+
+# Check if the parent directory has write permissions
+if [ -w "$parent_directory" ]; then
+    echo "Write permission exists on the parent directory."
+else
+    echo "Write permission does not exist on the parent directory. Exiting."
+    exit 1  # Exit with a non-zero status code indicating failure
+fi
+
+# Continue with the rest of your script here
+echo "Continuing with the script..."
+# ... rest of your script ...
+
+# Exit with a success status code
+exit 0
 echo "Executing: git archive -o ../release.zip HEAD"
 git archive -o ../release.zip HEAD
 
