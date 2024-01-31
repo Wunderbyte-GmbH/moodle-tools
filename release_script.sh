@@ -157,7 +157,9 @@ echo "Running main script..."
 prompt_and_change_directory
 
 # Switch to the desired branch
+git_cmd "fetch wunderbyte"
 git_cmd "switch -f $MUSI_STABLE"
+git_cmd "reset --hard wunderbyte/$MUSI_STABLE"
 
 # Remove the directory
 rm auth/saml2/.extlib/ -rf
@@ -187,7 +189,7 @@ git_push "univie" "$MUSI_STABLE" "-f"
 git_push "wunderbyte" "$MUSI_STABLE" "-f"
 
 # Fetch latest release
-git_cmd "fetch wunderbyte"
+
 git_cmd "switch $MUSI_ALLINONE -f"
 git_cmd "pull wunderbyte $MUSI_ALLINONE"
 
