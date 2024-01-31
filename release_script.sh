@@ -158,6 +158,7 @@ prompt_and_change_directory
 
 # Switch to the desired branch
 git_cmd "fetch wunderbyte"
+git_cmd "fetch --tags wunderbyte"
 git_cmd "switch -f $MUSI_STABLE"
 git_cmd "reset --hard wunderbyte/$MUSI_STABLE"
 
@@ -188,10 +189,8 @@ git_cmd "commit --amend --no-edit"
 git_push "univie" "$MUSI_STABLE" "-f"
 git_push "wunderbyte" "$MUSI_STABLE" "-f"
 
-# Fetch latest release
-
+# Switch to all in one
 git_cmd "switch $MUSI_ALLINONE -f"
-git_cmd "pull wunderbyte $MUSI_ALLINONE"
 
 # Prompt for the commit message
 read -p "Enter the commit message: " commit_message
