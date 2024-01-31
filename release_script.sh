@@ -189,9 +189,6 @@ git_cmd "commit --amend --no-edit"
 git_push "univie" "$MUSI_STABLE" "-f"
 git_push "wunderbyte" "$MUSI_STABLE" "-f"
 
-# Switch to all in one
-git_cmd "switch $MUSI_ALLINONE -f"
-
 # Prompt for the commit message
 read -p "Enter the commit message: " commit_message
 
