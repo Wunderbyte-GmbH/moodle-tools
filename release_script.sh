@@ -238,6 +238,7 @@ git submodule --quiet foreach 'cd $toplevel; zip -ru ../release.zip $sm_path'
 
 # Switch to the desired branch
 git_cmd "switch -f $MUSI_ALLINONE"
+git_cmd "reset --hard wunderbyte/$MUSI_ALLINONE"
 
 # Move the .git directory
 echo "Executing: mv .git ../"
