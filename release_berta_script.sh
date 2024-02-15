@@ -83,7 +83,7 @@ git_push() {
   local remote="$1"
   local branch="$2"
   shift 2  # Shift to remove the first two arguments (remote and branch)
-  
+
   local tags_option=""
   local force_option=""
 
@@ -237,6 +237,7 @@ git submodule --quiet foreach 'cd $toplevel; zip -ru ../release.zip $sm_path'
 
 # Switch to the desired branch
 git_cmd "switch -f $BERTA_ALLINONE"
+git_cmd "reset --hard origin/$BERTA_ALLINONE"
 
 # Move the .git directory
 echo "Executing: mv .git ../"
@@ -287,4 +288,3 @@ git_tag $releasetag "Release information"
 
 # Push to the desired branch with tags
 git_push "origin" "$BERTA_ALLINONE" "--tags"
-
