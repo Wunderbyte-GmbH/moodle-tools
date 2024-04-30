@@ -161,6 +161,7 @@ git_cmd "fetch origin"
 git_cmd "fetch --tags origin"
 git_cmd "switch -f $BERTA_STABLE"
 git_cmd "reset --hard origin/$BERTA_STABLE"
+git_cmd "submodule sync"
 
 # Remove the directory
 rm auth/saml2/.extlib/ -rf

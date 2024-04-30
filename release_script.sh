@@ -83,7 +83,7 @@ git_push() {
   local remote="$1"
   local branch="$2"
   shift 2  # Shift to remove the first two arguments (remote and branch)
-  
+
   local tags_option=""
   local force_option=""
 
@@ -104,7 +104,7 @@ git_push() {
 
   echo "Executing: git push $remote $branch $tags_option $force_option"
   git push $remote $branch $tags_option $force_option
- 
+
   if [ $? -ne 0 ]; then
     echo "Error: Git push failed. Exiting..."
     exit 1
@@ -161,6 +161,7 @@ git_cmd "fetch wunderbyte"
 git_cmd "fetch --tags wunderbyte"
 git_cmd "switch -f $MUSI_STABLE"
 git_cmd "reset --hard wunderbyte/$MUSI_STABLE"
+git_cmd "submodule sync"
 
 # Remove the directory
 rm auth/saml2/.extlib/ -rf
