@@ -104,7 +104,7 @@ git_push() {
 
   echo "Executing: git push $remote $branch $tags_option $force_option"
   git push $remote $branch $tags_option $force_option
- 
+
   if [ $? -ne 0 ]; then
     echo "Error: Git push failed. Exiting..."
     exit 1
@@ -165,6 +165,7 @@ git_cmd "submodule sync"
 
 # Remove the directory
 rm auth/saml2/.extlib/ -rf
+rm local/wb_faq/lang/ -rf
 
 # Update submodules
 git_cmd "submodule update --remote --init --recursive -f"
