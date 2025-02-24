@@ -18,7 +18,7 @@ fi
 announce_command cd "$directory"
 
 # Check git status and abort if there are changes
-GIT_STATUS=$(git status --porcelain)
+GIT_STATUS=$(git status --porcelain --untracked-files=no)
 
 if [[ -n "$GIT_STATUS" ]]; then
     echo "Error: There are uncommitted changes in the git repository. Please commit or stash them before running this script."
