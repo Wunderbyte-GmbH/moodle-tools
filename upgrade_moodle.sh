@@ -17,14 +17,20 @@ fi
 # Change to the specified directory
 announce_command cd "$directory"
 
-# Check git status
-announce_command sudo git status
+# Check git status and abort if there are changes
+GIT_STATUS=$(git status --porcelain)
+
+if [[ -n "$GIT_STATUS" ]]; then
+    echo "Error: There are uncommitted changes in the git repository. Please commit or stash them before running this script."
+    git status
+    exit 1
+fi
 
 # Get the new source and see if git can fetch the code
-announce_command sudo git fetch origin
+announce_command sudo -i git fetch origin
 
 # All good, then checkout the source
-announce_command sudo git pull
+announce_command sudo -i git pull
 
 # Detect the Apache user
 APACHE_USER=$(ps aux | grep -E '[a]pache|[h]ttpd' | grep -v root | awk '{print $1}' | uniq)
