@@ -5,8 +5,16 @@ announce_command() {
     "$@"
 }
 
+# Get the script's directory
+SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
 # Prompt for the directory
 read -p "Enter the directory path where the git commands should be executed: " directory
+
+# Resolve the directory path relative to the script's directory
+if [[ ! -d "$directory" ]]; then
+    directory="$SCRIPT_DIR/$directory"
+fi
 
 # Check if the directory is a git repository
 if [[ ! -d "$directory/.git" ]]; then
