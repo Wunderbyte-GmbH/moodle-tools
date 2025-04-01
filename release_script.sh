@@ -2,23 +2,33 @@
 
 # Function to calculate the release tag
 calculate_release_tag() {
-  if [ -z "$latest_version" ]; then
-    echo "No existing tags found. Unable to calculate the release tag."
-    exit 1
-  fi
-
   # Split the version string into major, minor, and patch components
   IFS='.' read -ra version_parts <<< "$latest_version"
   major="${version_parts[0]}"
   minor="${version_parts[1]}"
   patch="${version_parts[2]}"
 
-  # Check if patch is less than 9, then increment patch; otherwise, increment minor and reset patch to 0
-  new_patch=$((patch < 9 ? patch + 1 : 0))
-  new_minor=$((patch < 9 ? minor : minor + 1))
+  # Check if patch is less than 9, then increment patch
+  if [ "$patch" -lt 9 ]; then
+      new_patch=$((patch + 1))
+      new_minor="$minor"
+      new_major="$major"
+  # If patch is 9, reset patch to 0 and increment minor
+  else
+      new_patch=0
+      # Check if minor is less than 9, then increment minor
+      if [ "$minor" -lt 9 ]; then
+          new_minor=$((minor + 1))
+          new_major="$major"
+      # If minor is 9, reset minor to 0 and increment major
+      else
+          new_minor=0
+          new_major=$((major + 1))
+      fi
+  fi
 
   # Construct the new version string
-  new_version="$major.$new_minor.$new_patch"
+  new_version="$new_major.$new_minor.$new_patch"
   calculated_tag="USI-v$new_version"
   echo "$calculated_tag"
 }
@@ -271,7 +281,6 @@ find . -name ".git" -type f -delete
 
 # Add all changes
 git_cmd "add ."
-
 
 # Commit the changes only if there are changes
 if [[ -n $(git status -s) ]]; then

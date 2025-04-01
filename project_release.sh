@@ -8,28 +8,6 @@ usage() {
     exit 1
 }
 
-# Function to check if a branch exists
-check_branch_exists() {
-    local branch=$1
-    local repo_dir=$2
-
-    if [ ! -d "$repo_dir/.git" ]; then
-        echo "Error: Git repository not found in $repo_dir."
-        return 1
-    fi
-
-    cd "$repo_dir" || return 1
-    git fetch origin &>/dev/null
-    git fetch upstream &>/dev/null
-
-    if ! git ls-remote --heads origin "$branch" &>/dev/null && \
-       ! git ls-remote --heads upstream "$branch" &>/dev/null; then
-        echo "Error: Branch '$branch' does not exist in either origin or upstream."
-        return 1
-    fi
-    return 0
-}
-
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -73,6 +51,28 @@ MOODLE_STABLE="MOODLE_${moodle_version}_STABLE"
 PROJECT_STABLE="${project}_${moodle_version}_STABLE"
 PROJECT_ALLINONE="${project}_${moodle_version}_ALLINONE"
 
+# Function to check if a branch exists
+check_branch_exists() {
+    local branch=$1
+    local repo_dir=$2
+
+    if [ ! -d "$repo_dir/.git" ]; then
+        echo "Error: Git repository not found in $repo_dir."
+        return 1
+    fi
+
+    cd "$repo_dir" || return 1
+    git fetch wunderbyte &>/dev/null
+    git fetch upstream &>/dev/null
+
+    if ! git ls-remote --heads wunderbyte "$branch" &>/dev/null && \
+       ! git ls-remote --heads upstream "$branch" &>/dev/null; then
+        echo "Error: Branch '$branch' does not exist in either wunderbyte or upstream."
+        return 1
+    fi
+    return 0
+}
+
 # Function to validate all required branches
 validate_branches() {
     local branches=("$MOODLE_STABLE" "$PROJECT_STABLE" "$PROJECT_ALLINONE")
@@ -93,25 +93,35 @@ validate_branches() {
 
     echo "All required branches exist. Proceeding with deployment..."
 }
-
 # Function to calculate the release tag
 calculate_release_tag() {
-    if [ -z "$latest_version" ]; then
-        latest_version="1.0.0"  # Set a default initial version
-    fi
-
     # Split the version string into major, minor, and patch components
     IFS='.' read -ra version_parts <<< "$latest_version"
     major="${version_parts[0]}"
     minor="${version_parts[1]}"
     patch="${version_parts[2]}"
 
-    # Check if patch is less than 9, then increment patch; otherwise, increment minor and reset patch to 0
-    new_patch=$((patch < 9 ? patch + 1 : 0))
-    new_minor=$((patch < 9 ? minor : minor + 1))
+    # Check if patch is less than 9, then increment patch
+    if [ "$patch" -lt 9 ]; then
+        new_patch=$((patch + 1))
+        new_minor="$minor"
+        new_major="$major"
+    # If patch is 9, reset patch to 0 and increment minor
+    else
+        new_patch=0
+        # Check if minor is less than 9, then increment minor
+        if [ "$minor" -lt 9 ]; then
+            new_minor=$((minor + 1))
+            new_major="$major"
+        # If minor is 9, reset minor to 0 and increment major
+        else
+            new_minor=0
+            new_major=$((major + 1))
+        fi
+    fi
 
     # Construct the new version string
-    new_version="$major.$new_minor.$new_patch"
+    new_version="$new_major.$new_minor.$new_patch"
     calculated_tag="$project-v$new_version"
     echo "$calculated_tag"
 }
@@ -121,7 +131,7 @@ detect_latest_version() {
     latest_tags=$(git tag --list "$project-v*" | sort -V | tail -n 1)
 
     if [ -z "$latest_tags" ]; then
-        latest_version="1.0.0"  # Set a default initial version
+        latest_version="$project-v0.0.1"  # Set a default initial version
     else
         latest_version=${latest_tags#"$project-v"}
     fi
@@ -176,11 +186,24 @@ git_cmd() {
     fi
 }
 
+# Function to check if a remote exists
+check_remote_exists() {
+    local remote_name="$1"
+    git remote | grep -q "^$remote_name$"
+    return $?
+}
+
 # Function to perform git push
 git_push() {
     local remote="$1"
     local branch="$2"
     shift 2  # Shift to remove the first two arguments (remote and branch)
+
+    # Check if the specified remote exists
+    if ! check_remote_exists "$remote"; then
+        echo "Remote '$remote' does not exist. Skipping git push command."
+        return 0  # Return success (0) to continue script execution
+    fi
 
     local tags_option=""
     local force_option=""
@@ -252,10 +275,10 @@ validate_branches
 prompt_and_change_directory
 
 # Switch to the desired branch
-git_cmd "fetch origin"
-git_cmd "fetch --tags origin"
+git_cmd "fetch wunderbyte"
+git_cmd "fetch --tags wunderbyte"
 git_cmd "switch -f $PROJECT_STABLE"
-git_cmd "reset --hard origin/$PROJECT_STABLE"
+git_cmd "reset --hard wunderbyte/$PROJECT_STABLE"
 git_cmd "submodule sync"
 
 # Remove the directory
@@ -281,8 +304,10 @@ git_cmd "rebase upstream/$MOODLE_STABLE"
 
 # Amend the commit
 git_cmd "commit --amend --no-edit"
+
 # Push to the desired branch with force
-git_push "origin" "$PROJECT_STABLE" "-f"
+git_push "${project,,}" "$MUSI_STABLE" "-f"
+git_push "wunderbyte" "$PROJECT_STABLE" "-f"
 
 # Prompt for the commit message
 read -p "Enter the commit message: " commit_message
@@ -331,7 +356,7 @@ git submodule --quiet foreach 'cd $toplevel; zip -ru ../release.zip $sm_path'
 
 # Switch to the desired branch
 git_cmd "switch -f $PROJECT_ALLINONE"
-git_cmd "reset --hard origin/$PROJECT_ALLINONE"
+git_cmd "reset --hard wunderbyte/$PROJECT_ALLINONE"
 
 # Move the .git directory
 echo "Executing: mv .git ../"
@@ -380,4 +405,5 @@ fi
 git_tag $releasetag "Release information"
 
 # Push to the desired branch with tags
-git_push "origin" "$PROJECT_ALLINONE" "--tags"
+git_push "wunderbyte" "$PROJECT_ALLINONE" "--tags"
+git_push "${project,,}" "$PROJECT_ALLINONE" "--tags"
