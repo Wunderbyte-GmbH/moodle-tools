@@ -1,8 +1,10 @@
 #!/bin/bash
 
 # Global configuration variables
-# The main development branch to use when selecting HEAD
-MAIN_BRANCH="WKO_403_ALLINONE"
+# Available main branches for checkout
+BRANCH_403="WKO_403_ALLINONE"
+BRANCH_404="WKO_404_ALLINONE"
+BRANCH_405="WKO_405_ALLINONE"
 
 announce_command() {
     echo "Executing: $@"
@@ -415,25 +417,40 @@ handle_git_checkout() {
     local wko_tags=($(git tag -l "WKO*" | sort -rV | head -5))
     local tag_count=${#wko_tags[@]}
 
-    if [[ $tag_count -eq 0 ]]; then
-        echo "No WKO tags found. Proceeding with normal pull from HEAD."
-        announce_command git checkout $MAIN_BRANCH
-        announce_command git fetch origin
-        announce_command git pull
-        return 0
+    # Define available branches
+    local branches=("$BRANCH_403" "$BRANCH_404" "$BRANCH_405")
+    local branch_count=${#branches[@]}
+
+    # Check if we're in detached HEAD state
+    local is_detached=false
+    if git symbolic-ref -q HEAD >/dev/null; then
+        # Not detached
+        current_branch=$(git symbolic-ref --short HEAD)
+        echo "Currently on branch: $current_branch"
+    else
+        # Detached HEAD
+        is_detached=true
+        echo "Currently in detached HEAD state (likely on a tag)."
     fi
 
     # Display options to the user
-    echo "Please select which version to checkout:"
-    echo "0) HEAD (Latest code from branch $MAIN_BRANCH)"
+    echo -e "\nPlease select which version to checkout:"
+
+    # Display HEAD options with numbers
+    echo -e "\n--- BRANCH OPTIONS ---"
+    for ((i=0; i<branch_count; i++)); do
+        echo "$i) HEAD (Latest code from branch ${branches[$i]})"
+    done
 
     # Display available tags with numbers
+    echo -e "\n--- TAG OPTIONS ---"
+    local tag_start=$branch_count
     for ((i=0; i<tag_count; i++)); do
-        echo "$((i+1))) Tag: ${wko_tags[$i]}"
+        echo "$((i+tag_start))) Tag: ${wko_tags[$i]}"
     done
 
     # Get user choice with validation
-    local max_option=$tag_count
+    local max_option=$((branch_count + tag_count - 1))
     local valid_choice=false
     local choice
 
@@ -448,13 +465,19 @@ handle_git_checkout() {
     done
 
     # Process the user's choice
-    if [[ "$choice" -eq 0 ]]; then
-        echo "Checking out latest code from branch $MAIN_BRANCH ..."
-        announce_command git checkout $MAIN_BRANCH
+    if [[ "$choice" -lt "$branch_count" ]]; then
+        # User selected a branch
+        local selected_branch=${branches[$choice]}
+        echo "Checking out latest code from branch $selected_branch..."
+
+        # First make sure we're on the branch (especially if detached)
+        announce_command git checkout "$selected_branch"
         announce_command git fetch origin
         announce_command git pull
     else
-        local selected_tag=${wko_tags[$((choice-1))]}
+        # User selected a tag
+        local tag_index=$((choice - branch_count))
+        local selected_tag=${wko_tags[$tag_index]}
         echo "Checking out tag $selected_tag..."
         announce_command git fetch origin
         announce_command git checkout "$selected_tag"
