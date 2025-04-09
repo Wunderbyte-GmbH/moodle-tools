@@ -3,7 +3,7 @@
 # Function to display usage information
 usage() {
     echo "Usage: $0 -p|--project PROJECT_NAME -m|--mdlversion MOODLE_VERSION"
-    echo "  -p, --project     Project name (must be in capital letters)"
+    echo "  -p, --project     Project name (e.g. UWK)"
     echo "  -m, --mdlversion  Moodle version (e.g., 403)"
     exit 1
 }
@@ -37,8 +37,11 @@ if [[ ! "$project" =~ ^[A-Z]+$ ]]; then
     project=${project^^}
 fi
 
+# Define lowercase project name
+project_lowercase=${project,,}
+
 # Define repository directory
-repo_dir="/var/www/html/${project,,}-complete"
+repo_dir="/var/www/html/${project_lowercase}-complete"
 
 # Check if repository directory exists
 if [ ! -d "$repo_dir" ]; then
@@ -63,79 +66,122 @@ check_branch_exists() {
 
     cd "$repo_dir" || return 1
     git fetch wunderbyte &>/dev/null
-    git fetch upstream &>/dev/null
+    git fetch "${project_lowercase}" &>/dev/null
 
     if ! git ls-remote --heads wunderbyte "$branch" &>/dev/null && \
-       ! git ls-remote --heads upstream "$branch" &>/dev/null; then
-        echo "Error: Branch '$branch' does not exist in either wunderbyte or upstream."
+       ! git ls-remote --heads "${project_lowercase}" "$branch" &>/dev/null; then
         return 1
     fi
     return 0
 }
 
-# Function to validate all required branches
+# Function to validate all required branches and create PROJECT_ALLINONE if it doesn't exist
 validate_branches() {
-    local branches=("$MOODLE_STABLE" "$PROJECT_STABLE" "$PROJECT_ALLINONE")
-    local failed=0
-
     echo "Validating required branches in $repo_dir..."
-    for branch in "${branches[@]}"; do
-        echo "Checking branch: $branch"
-        if ! check_branch_exists "$branch" "$repo_dir"; then
-            failed=1
-        fi
-    done
 
-    if [ $failed -eq 1 ]; then
-        echo "Error: One or more required branches are missing. Please ensure all required branches exist before running this script."
+    # Check MOODLE_STABLE branch
+    echo "Checking branch: $MOODLE_STABLE"
+    if ! check_branch_exists "$MOODLE_STABLE" "$repo_dir"; then
+        echo "Error: Branch '$MOODLE_STABLE' does not exist in either wunderbyte or upstream."
+        echo "This branch is required. Exiting..."
         exit 1
     fi
 
-    echo "All required branches exist. Proceeding with deployment..."
-}
-# Function to calculate the release tag
-calculate_release_tag() {
-    # Split the version string into major, minor, and patch components
-    IFS='.' read -ra version_parts <<< "$latest_version"
-    major="${version_parts[0]}"
-    minor="${version_parts[1]}"
-    patch="${version_parts[2]}"
-
-    # Check if patch is less than 9, then increment patch
-    if [ "$patch" -lt 9 ]; then
-        new_patch=$((patch + 1))
-        new_minor="$minor"
-        new_major="$major"
-    # If patch is 9, reset patch to 0 and increment minor
-    else
-        new_patch=0
-        # Check if minor is less than 9, then increment minor
-        if [ "$minor" -lt 9 ]; then
-            new_minor=$((minor + 1))
-            new_major="$major"
-        # If minor is 9, reset minor to 0 and increment major
-        else
-            new_minor=0
-            new_major=$((major + 1))
-        fi
+    # Check PROJECT_STABLE branch
+    echo "Checking branch: $PROJECT_STABLE"
+    if ! check_branch_exists "$PROJECT_STABLE" "$repo_dir"; then
+        echo "Error: Branch '$PROJECT_STABLE' does not exist in either wunderbyte or upstream."
+        echo "This branch is required. Exiting..."
+        exit 1
     fi
 
-    # Construct the new version string
-    new_version="$new_major.$new_minor.$new_patch"
-    calculated_tag="$project-v$new_version"
+    # Check PROJECT_ALLINONE branch
+    echo "Checking branch: $PROJECT_ALLINONE"
+    if ! check_branch_exists "$PROJECT_ALLINONE" "$repo_dir"; then
+        echo "Branch '$PROJECT_ALLINONE' does not exist. Creating it now..."
+        create_allinone_branch
+    else
+        echo "Branch '$PROJECT_ALLINONE' exists. Proceeding with deployment..."
+    fi
+}
+
+# Function to create the PROJECT_ALLINONE branch
+create_allinone_branch() {
+    cd "$repo_dir" || exit 1
+
+    echo "Creating $PROJECT_ALLINONE branch..."
+
+    # Switch to the PROJECT_STABLE branch first
+    echo "Switching to $PROJECT_STABLE branch..."
+    git switch -f "$PROJECT_STABLE"
+
+    # Create a new branch for PROJECT_ALLINONE
+    echo "Creating $PROJECT_ALLINONE branch..."
+    git checkout -b "$PROJECT_ALLINONE"
+
+    # Reset to initial Moodle commit
+    echo "Resetting to initial Moodle commit..."
+    # This is the hash of the initial commit - using the example from your input
+    git reset --hard f9903ed0a41ce4df0cb3628a06d6c0a9455ac75c
+
+    # Remove all files
+    echo "Removing all files..."
+    rm -rf *
+    rm -f .htaccess
+
+    # Add changes to git
+    echo "Adding changes to git..."
+    git add .
+
+    # Commit changes (amend with empty commit allowed)
+    echo "Committing changes..."
+    git commit --amend --allow-empty -m "Initial empty commit for $PROJECT_ALLINONE"
+
+    # Push to remote repositories
+    echo "Pushing to remote repositories..."
+    git_push "wunderbyte" "$PROJECT_ALLINONE"
+    git_push "${project_lowercase}" "$PROJECT_ALLINONE"
+
+    # Push the stable branch as well
+    git_push "wunderbyte" "$PROJECT_STABLE"
+    git_push "${project_lowercase}" "$PROJECT_STABLE"
+
+    # Switch back to the PROJECT_STABLE branch
+    echo "Switching back to $PROJECT_STABLE branch..."
+    git switch -f "$PROJECT_STABLE"
+
+    echo "Branch $PROJECT_ALLINONE created successfully."
+}
+
+# Function to calculate the release tag
+calculate_release_tag() {
+    # Extract Moodle version parts - for example 403 becomes 4.3
+    local moodle_major="${moodle_version:0:1}"
+    local moodle_minor="${moodle_version:1:1}"
+
+    # Check if there are existing tags with this format
+    local version_prefix="$project-v$moodle_major.$moodle_minor"
+    local existing_tags=$(git tag --list "$version_prefix.*" | sort -V)
+
+    if [ -z "$existing_tags" ]; then
+        # No existing tags with this format, start with 0
+        calculated_tag="$version_prefix.0"
+    else
+        # Get the latest tag and extract the patch version
+        local latest_tag=$(echo "$existing_tags" | tail -n 1)
+        local patch_version=$(echo "$latest_tag" | awk -F. '{print $NF}')
+
+        # Increment the patch version
+        local new_patch=$((patch_version + 1))
+        calculated_tag="$version_prefix.$new_patch"
+    fi
+
     echo "$calculated_tag"
 }
 
-# Function to detect the latest version based on tags
-detect_latest_version() {
-    latest_tags=$(git tag --list "$project-v*" | sort -V | tail -n 1)
-
-    if [ -z "$latest_tags" ]; then
-        latest_version="$project-v0.0.1"  # Set a default initial version
-    else
-        latest_version=${latest_tags#"$project-v"}
-    fi
-}
+# Extract Moodle version parts for use globally
+moodle_major="${moodle_version:0:1}"
+moodle_minor="${moodle_version:1:1}"
 
 # Function to check if a command exists
 command_exists() {
@@ -248,7 +294,7 @@ git_tag() {
 set -e
 
 # Set global variable for default directory
-execute_directory="/var/www/html/${project,,}-complete/"
+execute_directory="/var/www/html/${project_lowercase}-complete/"
 
 # Check if the script is not running with root privileges
 if [ "$(id -u)" -eq 0 ]; then
@@ -268,7 +314,7 @@ done
 # If VPN connection is active, proceed with your main script here
 echo "Running main script..."
 
-# Validate all required branches exist
+# Validate all required branches exist and create PROJECT_ALLINONE if it doesn't exist
 validate_branches
 
 # Prompt for the directory to execute the commands
@@ -299,31 +345,27 @@ if [[ $continue_execution != "y" ]]; then
 fi
 
 # Rebase with upstream Moodle
-git_cmd "fetch upstream"
-git_cmd "rebase upstream/$MOODLE_STABLE"
+git_cmd "fetch ${project_lowercase}"
+git_cmd "rebase ${project_lowercase}/$MOODLE_STABLE"
 
 # Amend the commit
 git_cmd "commit --amend --no-edit"
 
 # Push to the desired branch with force
-git_push "${project,,}" "$MUSI_STABLE" "-f"
+git_push "${project_lowercase}" "$PROJECT_STABLE" "-f"
 git_push "wunderbyte" "$PROJECT_STABLE" "-f"
 
 # Prompt for the commit message
 read -p "Enter the commit message: " commit_message
 
-# Find the latest tag starting with project name
-latest_tags=$(git tag --list "$project*" --sort=-v:refname | head -n 3)
+# Find the latest tag starting with project name and version format
+latest_tags=$(git tag --list "$project-v$moodle_major.$moodle_minor.*" --sort=-v:refname | head -n 3)
 
 # Prompt for the tag
-echo "Three latest tags starting with '$project':"
+echo "Three latest tags for Moodle $moodle_major.$moodle_minor format:"
 echo "$latest_tags"
 
-# Detect the latest version based on existing tags
-detect_latest_version
-
-# Initialize release tag
-releasetag=""
+# Calculate the next release tag
 calculated_tag=$(calculate_release_tag)
 
 # Prompt the user for a release tag until a valid one is provided
@@ -406,4 +448,4 @@ git_tag $releasetag "Release information"
 
 # Push to the desired branch with tags
 git_push "wunderbyte" "$PROJECT_ALLINONE" "--tags"
-git_push "${project,,}" "$PROJECT_ALLINONE" "--tags"
+git_push "${project_lowercase}" "$PROJECT_ALLINONE" "--tags"
