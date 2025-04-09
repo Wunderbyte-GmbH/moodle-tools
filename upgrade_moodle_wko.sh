@@ -413,15 +413,37 @@ handle_git_checkout() {
     echo "Fetching latest tags and branches from origin..."
     announce_command git fetch --all --tags
 
-    # Get all remote branches that match the pattern and strip the 'origin/' prefix
+    # First, try to find branches that match the pattern from local branches
     echo "Finding WKO branches..."
-    local branches=($(git branch -r | grep "origin/$BRANCH_PATTERN" | sed 's/origin\///' | sort -r))
-    local branch_count=${#branches[@]}
+    local branches=($(git branch | grep -v "^*" | grep "$BRANCH_PATTERN" | sed 's/^[[:space:]]*//'))
 
-    if [[ $branch_count -eq 0 ]]; then
-        echo "No branches found matching pattern $BRANCH_PATTERN. Aborting."
-        return 1
+    # If no local branches found, try to find from remote branches
+    if [[ ${#branches[@]} -eq 0 ]]; then
+        branches=($(git branch -r | grep "origin/$BRANCH_PATTERN" | sed 's/origin\///'))
     fi
+
+    # If still no branches found, use the current branch if it matches the pattern
+    if [[ ${#branches[@]} -eq 0 ]]; then
+        current_branch=$(git branch --show-current)
+        if [[ "$current_branch" == *"WKO"*"ALLINONE"* ]]; then
+            branches=("$current_branch")
+            echo "Using current branch: $current_branch"
+        fi
+    fi
+
+    # If still no branches found, add the current branch anyway as a fallback
+    if [[ ${#branches[@]} -eq 0 ]]; then
+        current_branch=$(git branch --show-current)
+        if [[ -n "$current_branch" ]]; then
+            branches=("$current_branch")
+            echo "No branches matching pattern found. Using current branch: $current_branch"
+        else
+            echo "No branches found matching pattern $BRANCH_PATTERN and no current branch. Aborting."
+            exit 1
+        fi
+    fi
+
+    local branch_count=${#branches[@]}
 
     # Get the last 5 tags starting with "WKO" ordered by creation time (newest first)
     echo "Finding recent WKO tags by creation time..."
@@ -454,46 +476,9 @@ handle_git_checkout() {
     local tag_start=$branch_count
     for ((i=0; i<tag_count; i++)); do
         # Show tag with its creation date
-        tag_date=$(git log -1 --format=%cd --date=short refs/tags/${wko_tags[$i]})
+        tag_date=$(git log -1 --format=%cd --date=short refs/tags/${wko_tags[$i]} 2>/dev/null || echo "unknown date")
         echo "$((i+tag_start))) Tag: ${wko_tags[$i]} (created: $tag_date)"
     done
-
-    # Get user choice with validation
-    local max_option=$((branch_count + tag_count - 1))
-    local valid_choice=false
-    local choice
-
-    while [[ "$valid_choice" != "true" ]]; do
-        read -p "Enter your choice (0-$max_option): " choice
-
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -le "$max_option" ]]; then
-            valid_choice=true
-        else
-            echo "Invalid choice. Please enter a number between 0 and $max_option."
-        fi
-    done
-
-    # Process the user's choice
-    if [[ "$choice" -lt "$branch_count" ]]; then
-        # User selected a branch
-        local selected_branch=${branches[$choice]}
-        echo "Checking out latest code from branch $selected_branch..."
-
-        # First make sure we're on the branch (especially if detached)
-        announce_command git checkout "$selected_branch"
-        announce_command git fetch origin
-        announce_command git pull
-    else
-        # User selected a tag
-        local tag_index=$((choice - branch_count))
-        local selected_tag=${wko_tags[$tag_index]}
-        echo "Checking out tag $selected_tag..."
-        announce_command git fetch origin
-        announce_command git checkout "$selected_tag"
-    fi
-
-    return 0
-}
 
     # Get user choice with validation
     local max_option=$((branch_count + tag_count - 1))
