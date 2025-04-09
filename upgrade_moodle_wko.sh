@@ -413,34 +413,14 @@ handle_git_checkout() {
     echo "Fetching latest tags and branches from origin..."
     announce_command git fetch --all --tags
 
-    # First, try to find branches that match the pattern from local branches
+    # Find branches that match the pattern from local branches
     echo "Finding WKO branches..."
     local branches=($(git branch | grep -v "^*" | grep "$BRANCH_PATTERN" | sed 's/^[[:space:]]*//'))
 
-    # If no local branches found, try to find from remote branches
+    # If no local branches found, then exit
     if [[ ${#branches[@]} -eq 0 ]]; then
-        branches=($(git branch -r | grep "origin/$BRANCH_PATTERN" | sed 's/origin\///'))
-    fi
-
-    # If still no branches found, use the current branch if it matches the pattern
-    if [[ ${#branches[@]} -eq 0 ]]; then
-        current_branch=$(git branch --show-current)
-        if [[ "$current_branch" == *"WKO"*"ALLINONE"* ]]; then
-            branches=("$current_branch")
-            echo "Using current branch: $current_branch"
-        fi
-    fi
-
-    # If still no branches found, add the current branch anyway as a fallback
-    if [[ ${#branches[@]} -eq 0 ]]; then
-        current_branch=$(git branch --show-current)
-        if [[ -n "$current_branch" ]]; then
-            branches=("$current_branch")
-            echo "No branches matching pattern found. Using current branch: $current_branch"
-        else
-            echo "No branches found matching pattern $BRANCH_PATTERN and no current branch. Aborting."
-            exit 1
-        fi
+        echo "No local branches found matching pattern $BRANCH_PATTERN. Aborting."
+        exit 1
     fi
 
     local branch_count=${#branches[@]}
