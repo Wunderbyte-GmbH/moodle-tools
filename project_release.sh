@@ -3,7 +3,7 @@
 # Function to display usage information
 usage() {
     echo "Usage: $0 -p|--project PROJECT_NAME -m|--mdlversion MOODLE_VERSION"
-    echo "  -p, --project     Project name (e.g. UWK)"
+    echo "  -p, --project     Project name (e.g. WKO)"
     echo "  -m, --mdlversion  Moodle version (e.g., 403)"
     exit 1
 }
@@ -66,13 +66,22 @@ check_branch_exists() {
 
     cd "$repo_dir" || return 1
     git fetch wunderbyte &>/dev/null
-    git fetch "${project_lowercase}" &>/dev/null
 
-    if ! git ls-remote --heads wunderbyte "$branch" &>/dev/null && \
-       ! git ls-remote --heads "${project_lowercase}" "$branch" &>/dev/null; then
-        return 1
+    # Check if branch exists in wunderbyte
+    if git ls-remote --heads wunderbyte "$branch" &>/dev/null; then
+        return 0
     fi
-    return 0
+
+    if check_remote_exists "${project_lowercase}"; then
+        # Only fetch from project_lowercase if it exists as a remote
+        git fetch "${project_lowercase}" &>/dev/null
+        # Only check project_lowercase if it exists as a remote
+        if git ls-remote --heads "${project_lowercase}" "$branch" &>/dev/null; then
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 # Function to validate all required branches and create PROJECT_ALLINONE if it doesn't exist
@@ -140,11 +149,21 @@ create_allinone_branch() {
     # Push to remote repositories
     echo "Pushing to remote repositories..."
     git_push "wunderbyte" "$PROJECT_ALLINONE"
-    git_push "${project_lowercase}" "$PROJECT_ALLINONE"
+    # Only push to project_lowercase if it exists
+    if check_remote_exists "${project_lowercase}"; then
+        git_push "${project_lowercase}" "$PROJECT_ALLINONE"
+    else
+        echo "Remote ${project_lowercase} does not exist, skipping push to it."
+    fi
 
     # Push the stable branch as well
     git_push "wunderbyte" "$PROJECT_STABLE"
-    git_push "${project_lowercase}" "$PROJECT_STABLE"
+    # Only push to project_lowercase if it exists
+    if check_remote_exists "${project_lowercase}"; then
+        git_push "${project_lowercase}" "$PROJECT_STABLE"
+    else
+        echo "Remote ${project_lowercase} does not exist, skipping push to it."
+    fi
 
     # Switch back to the PROJECT_STABLE branch
     echo "Switching back to $PROJECT_STABLE branch..."
@@ -345,14 +364,19 @@ if [[ $continue_execution != "y" ]]; then
 fi
 
 # Rebase with upstream Moodle
-git_cmd "fetch ${project_lowercase}"
-git_cmd "rebase ${project_lowercase}/$MOODLE_STABLE"
+ git_cmd "fetch upstream"
+ git_cmd "rebase upstream/$MOODLE_STABLE"
 
 # Amend the commit
 git_cmd "commit --amend --no-edit"
 
 # Push to the desired branch with force
-git_push "${project_lowercase}" "$PROJECT_STABLE" "-f"
+# Only push to project_lowercase if it exists
+if check_remote_exists "${project_lowercase}"; then
+    git_push "${project_lowercase}" "$PROJECT_STABLE" "-f"
+else
+    echo "Remote ${project_lowercase} does not exist, skipping push to it."
+fi
 git_push "wunderbyte" "$PROJECT_STABLE" "-f"
 
 # Prompt for the commit message
@@ -448,4 +472,9 @@ git_tag $releasetag "Release information"
 
 # Push to the desired branch with tags
 git_push "wunderbyte" "$PROJECT_ALLINONE" "--tags"
-git_push "${project_lowercase}" "$PROJECT_ALLINONE" "--tags"
+# Only push to project_lowercase if it exists
+if check_remote_exists "${project_lowercase}"; then
+    git_push "${project_lowercase}" "$PROJECT_ALLINONE" "--tags"
+else
+    echo "Remote ${project_lowercase} does not exist, skipping push to it."
+fi
