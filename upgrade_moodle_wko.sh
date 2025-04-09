@@ -1,10 +1,8 @@
 #!/bin/bash
 
 # Global configuration variables
-# Available main branches for checkout
-BRANCH_403="WKO_403_ALLINONE"
-BRANCH_404="WKO_404_ALLINONE"
-BRANCH_405="WKO_405_ALLINONE"
+# Pattern for finding branches
+BRANCH_PATTERN="WKO_*_ALLINONE"
 
 announce_command() {
     echo "Executing: $@"
@@ -109,7 +107,7 @@ read_config() {
     return 0
 }
 
-# Function to setup backup directory and clean old backups
+# Setup backup directory and clean up old backups if needed
 setup_backup_directory() {
     # Create backup directory if it doesn't exist
     if [[ -d "$MOODLE_BACKUP_DIR" ]]; then
@@ -191,8 +189,8 @@ check_site_availability() {
     # Check if curl is available
     if command -v curl &> /dev/null; then
         local status_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout $timeout "$MOODLE_WWWROOT")
+        # 200 = OK, 503 = Service Unavailable (maintenance mode), 303 = See Other (redirect)
         if [[ "$status_code" -eq 200 || "$status_code" -eq 503 || "$status_code" -eq 303 || "$status_code" -eq 302 || "$status_code" -eq 301 ]]; then
-            # 503 is acceptable if maintenance mode is on
             echo "Site is available (HTTP status: $status_code)"
             return 0
         else
@@ -393,6 +391,9 @@ detect_apache_user() {
     # If still not found, use default
     if [[ -z "$apache_user" ]]; then
         apache_user="www-data"
+        echo "Warning: Web server user not found. Using default '$apache_user'."
+    else
+        echo "Using web server user: $apache_user"
     fi
 
     # Export the variable to make it available globally
@@ -408,18 +409,24 @@ handle_git_checkout() {
     # Make sure we're in the right directory
     cd "$repo_dir" || return 1
 
-    # Fetch all tags from origin
+    # Fetch all tags and branches from origin
     echo "Fetching latest tags and branches from origin..."
-    announce_command git fetch --tags origin
+    announce_command git fetch --all --tags
 
-    # Get the last 5 tags starting with "WKO"
-    echo "Finding recent WKO tags..."
-    local wko_tags=($(git tag -l "WKO*" | sort -rV | head -5))
-    local tag_count=${#wko_tags[@]}
-
-    # Define available branches
-    local branches=("$BRANCH_403" "$BRANCH_404" "$BRANCH_405")
+    # Get all remote branches that match the pattern and strip the 'origin/' prefix
+    echo "Finding WKO branches..."
+    local branches=($(git branch -r | grep "origin/$BRANCH_PATTERN" | sed 's/origin\///' | sort -r))
     local branch_count=${#branches[@]}
+
+    if [[ $branch_count -eq 0 ]]; then
+        echo "No branches found matching pattern $BRANCH_PATTERN. Aborting."
+        return 1
+    fi
+
+    # Get the last 5 tags starting with "WKO" ordered by creation time (newest first)
+    echo "Finding recent WKO tags by creation time..."
+    local wko_tags=($(git for-each-ref --sort=-creatordate --format '%(refname:short)' --count=5 refs/tags/WKO-v*))
+    local tag_count=${#wko_tags[@]}
 
     # Check if we're in detached HEAD state
     local is_detached=false
@@ -446,8 +453,47 @@ handle_git_checkout() {
     echo -e "\n--- TAG OPTIONS ---"
     local tag_start=$branch_count
     for ((i=0; i<tag_count; i++)); do
-        echo "$((i+tag_start))) Tag: ${wko_tags[$i]}"
+        # Show tag with its creation date
+        tag_date=$(git log -1 --format=%cd --date=short refs/tags/${wko_tags[$i]})
+        echo "$((i+tag_start))) Tag: ${wko_tags[$i]} (created: $tag_date)"
     done
+
+    # Get user choice with validation
+    local max_option=$((branch_count + tag_count - 1))
+    local valid_choice=false
+    local choice
+
+    while [[ "$valid_choice" != "true" ]]; do
+        read -p "Enter your choice (0-$max_option): " choice
+
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -le "$max_option" ]]; then
+            valid_choice=true
+        else
+            echo "Invalid choice. Please enter a number between 0 and $max_option."
+        fi
+    done
+
+    # Process the user's choice
+    if [[ "$choice" -lt "$branch_count" ]]; then
+        # User selected a branch
+        local selected_branch=${branches[$choice]}
+        echo "Checking out latest code from branch $selected_branch..."
+
+        # First make sure we're on the branch (especially if detached)
+        announce_command git checkout "$selected_branch"
+        announce_command git fetch origin
+        announce_command git pull
+    else
+        # User selected a tag
+        local tag_index=$((choice - branch_count))
+        local selected_tag=${wko_tags[$tag_index]}
+        echo "Checking out tag $selected_tag..."
+        announce_command git fetch origin
+        announce_command git checkout "$selected_tag"
+    fi
+
+    return 0
+}
 
     # Get user choice with validation
     local max_option=$((branch_count + tag_count - 1))
@@ -512,14 +558,14 @@ if ! read_config "$directory/config.php"; then
     exit 1
 fi
 
+# Setup SSH key for git operations
+setup_ssh_key
+
 # Detect and set Apache user
 detect_apache_user
 
 # Setup backup directory and clean up old backups if needed
 setup_backup_directory
-
-# Setup SSH key for git operations
-setup_ssh_key
 
 # Check git repository status
 if ! check_git_status "$directory"; then

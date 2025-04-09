@@ -176,7 +176,7 @@ create_allinone_branch() {
 calculate_release_tag() {
     # Extract Moodle version parts - for example 403 becomes 4.3
     local moodle_major="${moodle_version:0:1}"
-    local moodle_minor="${moodle_version:1:1}"
+    local moodle_minor="${moodle_version:2:2}"
 
     # Check if there are existing tags with this format
     local version_prefix="$project-v$moodle_major.$moodle_minor"
