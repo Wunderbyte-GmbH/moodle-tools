@@ -277,26 +277,9 @@ create_database_backup() {
 
     # Check if backup directory is writable by current user
     if [[ ! -w "$MOODLE_BACKUP_DIR" ]]; then
-        echo "Warning: Backup directory is not writable by current user."
-        echo "Attempting to fix permissions..."
-
-        # Try to fix permissions with sudo
-        if command -v sudo &> /dev/null; then
-            sudo chmod 775 "$MOODLE_BACKUP_DIR"
-
-            # Check if that worked
-            if [[ ! -w "$MOODLE_BACKUP_DIR" ]]; then
-                echo "Error: Could not make backup directory writable even with sudo."
-                echo "Please manually ensure $MOODLE_BACKUP_DIR is writable by the current user."
-                return 1
-            else
-                echo "Successfully made backup directory writable."
-            fi
-        else
-            echo "Error: Cannot make backup directory writable. 'sudo' command not available."
-            echo "Please manually ensure $MOODLE_BACKUP_DIR is writable by the current user."
-            return 1
-        fi
+        echo "Error: Backup directory $MOODLE_BACKUP_DIR is not writable by current user."
+        echo "Please make sure the directory has appropriate permissions."
+        return 1
     fi
 
     # Set backup filename with current date and hostname
@@ -364,7 +347,6 @@ create_database_backup() {
         return 1
     fi
 }
-
 # Determine the SSH key dynamically
 find_ssh_key() {
     local ssh_dir="$1"
