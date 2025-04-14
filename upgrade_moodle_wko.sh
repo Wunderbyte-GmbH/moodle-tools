@@ -270,7 +270,34 @@ create_database_backup() {
     echo "Creating database backup..."
 
     # Create backup directory if it doesn't exist
-    mkdir -p "$MOODLE_BACKUP_DIR"
+    if [[ ! -d "$MOODLE_BACKUP_DIR" ]]; then
+        mkdir -p "$MOODLE_BACKUP_DIR"
+        echo "Created backup directory at $MOODLE_BACKUP_DIR"
+    fi
+
+    # Check if backup directory is writable by current user
+    if [[ ! -w "$MOODLE_BACKUP_DIR" ]]; then
+        echo "Warning: Backup directory is not writable by current user."
+        echo "Attempting to fix permissions..."
+
+        # Try to fix permissions with sudo
+        if command -v sudo &> /dev/null; then
+            sudo chmod 775 "$MOODLE_BACKUP_DIR"
+
+            # Check if that worked
+            if [[ ! -w "$MOODLE_BACKUP_DIR" ]]; then
+                echo "Error: Could not make backup directory writable even with sudo."
+                echo "Please manually ensure $MOODLE_BACKUP_DIR is writable by the current user."
+                return 1
+            else
+                echo "Successfully made backup directory writable."
+            fi
+        else
+            echo "Error: Cannot make backup directory writable. 'sudo' command not available."
+            echo "Please manually ensure $MOODLE_BACKUP_DIR is writable by the current user."
+            return 1
+        fi
+    fi
 
     # Set backup filename with current date and hostname
     local current_date=$(date +"%Y%m%d_%H%M%S")
@@ -403,6 +430,7 @@ detect_apache_user() {
 }
 
 # Function to handle git tag selection and checkout
+# Function to handle git tag selection and checkout
 handle_git_checkout() {
     local repo_dir="$1"
 
@@ -413,42 +441,49 @@ handle_git_checkout() {
     echo "Fetching latest tags and branches from origin..."
     announce_command git fetch --all --tags
 
-    # Find branches that match the pattern from local branches
-    echo "Finding WKO branches..."
-    local branches=($(git branch | grep -v "^*" | grep "$BRANCH_PATTERN" | sed 's/^[[:space:]]*//'))
+    # Get the current branch
+    local current_branch=$(git branch --show-current)
+    echo "Current branch: $current_branch"
 
-    # If no local branches found, then exit
+    # Get all local branches that match the pattern
+    echo "Finding local branches matching $BRANCH_PATTERN..."
+    local branches=()
+    while IFS= read -r branch; do
+        # Remove leading whitespace and asterisk
+        branch=$(echo "$branch" | sed 's/^\*\?[[:space:]]*//')
+        if [[ -n "$branch" && "$branch" == $BRANCH_PATTERN ]]; then
+            branches+=("$branch")
+        fi
+    done < <(git branch)
+
+    # If no branches found, exit with clear message
     if [[ ${#branches[@]} -eq 0 ]]; then
-        echo "No local branches found matching pattern $BRANCH_PATTERN. Aborting."
+        echo "Error: No local branches found matching pattern $BRANCH_PATTERN."
+        echo "Available branches:"
+        git branch
+        echo "Aborting."
         exit 1
     fi
 
     local branch_count=${#branches[@]}
+    echo "Found $branch_count matching branches."
 
     # Get the last 5 tags starting with "WKO" ordered by creation time (newest first)
     echo "Finding recent WKO tags by creation time..."
     local wko_tags=($(git for-each-ref --sort=-creatordate --format '%(refname:short)' --count=5 refs/tags/WKO-v*))
     local tag_count=${#wko_tags[@]}
 
-    # Check if we're in detached HEAD state
-    local is_detached=false
-    if git symbolic-ref -q HEAD >/dev/null; then
-        # Not detached
-        current_branch=$(git symbolic-ref --short HEAD)
-        echo "Currently on branch: $current_branch"
-    else
-        # Detached HEAD
-        is_detached=true
-        echo "Currently in detached HEAD state (likely on a tag)."
-    fi
-
     # Display options to the user
     echo -e "\nPlease select which version to checkout:"
 
-    # Display HEAD options with numbers
+    # Display branch options with numbers
     echo -e "\n--- BRANCH OPTIONS ---"
     for ((i=0; i<branch_count; i++)); do
-        echo "$i) HEAD (Latest code from branch ${branches[$i]})"
+        if [[ "${branches[$i]}" == "$current_branch" ]]; then
+            echo "$i) Branch: ${branches[$i]} [CURRENT]"
+        else
+            echo "$i) Branch: ${branches[$i]}"
+        fi
     done
 
     # Display available tags with numbers
@@ -481,8 +516,13 @@ handle_git_checkout() {
         local selected_branch=${branches[$choice]}
         echo "Checking out latest code from branch $selected_branch..."
 
-        # First make sure we're on the branch (especially if detached)
-        announce_command git checkout "$selected_branch"
+        # Check if we're already on the selected branch
+        if [[ "$selected_branch" == "$current_branch" ]]; then
+            echo "Already on branch $selected_branch"
+        else
+            announce_command git checkout "$selected_branch"
+        fi
+
         announce_command git fetch origin
         announce_command git pull
     else
