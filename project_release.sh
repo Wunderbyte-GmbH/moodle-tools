@@ -421,7 +421,7 @@ echo "Executing: git submodule --quiet foreach 'cd \$toplevel; zip -ru ../releas
 git submodule --quiet foreach 'cd $toplevel; zip -ru ../release.zip $sm_path'
 
 # Switch to the desired branch
-git_cmd "switch -f $PROJECT_ALLINONE"
+git_cmd "switch -f -C $PROJECT_ALLINONE --track wunderbyte/$PROJECT_ALLINONE"
 git_cmd "reset --hard wunderbyte/$PROJECT_ALLINONE"
 
 # Move the .git directory
