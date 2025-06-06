@@ -176,6 +176,7 @@ git_cmd "submodule sync"
 # Remove the directory
 rm auth/saml2/.extlib/ -rf
 rm payment/gateway/aau -rf
+rm payment/gateway/saferpay -rf
 
 # Update submodules
 git_cmd "submodule update --remote --init --recursive -f"
