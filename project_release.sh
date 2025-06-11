@@ -105,9 +105,22 @@ validate_branches() {
     fi
 
     # Check PROJECT_ALLINONE branch
-    echo "Checking branch: $PROJECT_ALLINONE"
-    if ! check_branch_exists "$PROJECT_ALLINONE" "$repo_dir"; then
-        echo "Branch '$PROJECT_ALLINONE' does not exist. Creating it now..."
+    cd "$repo_dir"
+
+    # Check if branch exists locally
+    local_branch_exists=false
+    if git branch --list | grep -q "^[* ]*${PROJECT_ALLINONE}$"; then
+        local_branch_exists=true
+    fi
+
+    # Check if branch exists on remotes
+    remote_branch_exists=false
+    if git ls-remote --heads wunderbyte "$PROJECT_ALLINONE" 2>/dev/null | grep -q "$PROJECT_ALLINONE"; then
+        remote_branch_exists=true
+    fi
+
+    if [ "$local_branch_exists" = false ] && [ "$remote_branch_exists" = false ]; then
+        echo "Branch '$PROJECT_ALLINONE' does not exist locally or remotely. Creating it now..."
         create_allinone_branch
     else
         echo "Branch '$PROJECT_ALLINONE' exists. Proceeding with deployment..."
@@ -116,7 +129,20 @@ validate_branches() {
 
 # Function to create the PROJECT_ALLINONE branch
 create_allinone_branch() {
-    cd "$repo_dir" || exit 1
+    echo "Current directory before cd: $(pwd)"
+    echo "Attempting to cd to: $repo_dir"
+
+    if [ ! -d "$repo_dir" ]; then
+        echo "Error: Repository directory $repo_dir does not exist!"
+        exit 1
+    fi
+
+    cd "$repo_dir" || {
+        echo "Error: Failed to change to directory $repo_dir"
+        exit 1
+    }
+
+    echo "Successfully changed to directory: $(pwd)"
 
     echo "Creating $PROJECT_ALLINONE branch..."
 
