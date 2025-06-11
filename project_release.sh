@@ -353,8 +353,10 @@ for cmd in "${required_commands[@]}"; do
     command_exists "$cmd"
 done
 
-# Check VPN status
-#check_vpn_status
+# Check VPN status only for MUSI project
+if [ "$project_lowercase" = "musi" ]; then
+    check_vpn_status
+fi
 
 # If VPN connection is active, proceed with your main script here
 echo "Running main script..."
