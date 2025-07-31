@@ -381,6 +381,8 @@ rm -rf auth/saml2/
 rm -rf local/wb_faq/lang/
 rm -rf payment/gateway/aau/
 rm -rf payment/gateway/saferpay/
+rm -rf question/type/multichoiceset
+rm -rf local/handout
 
 # Also clean up any existing .git files in these locations
 find auth/saml2 payment/gateway/aau payment/gateway/saferpay -name ".git" -type f -delete 2>/dev/null || true

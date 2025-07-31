@@ -128,9 +128,9 @@ git_tag() {
 set -e
 
 # Define variables for branch names
-MOODLE_STABLE="MOODLE_403_STABLE"
-BERTA_STABLE="BERTA_403_STABLE"
-BERTA_ALLINONE="BERTA_403_ALLINONE"
+MOODLE_STABLE="MOODLE_404_STABLE"
+BERTA_STABLE="BERTA_404_STABLE"
+BERTA_ALLINONE="BERTA_404_ALLINONE"
 
 # Set global variable
 execute_directory="/var/www/html/berta-complete/"
