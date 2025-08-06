@@ -599,18 +599,23 @@ announce_command sudo find . -type f -exec chmod 644 {} \;
 # Perform the upgrade for Moodle
 announce_command sudo -u "$APACHE_USER" php admin/cli/upgrade.php --non-interactive
 
-# Check if everything is OK for Moodle
-announce_command sudo -u "$APACHE_USER" php admin/cli/checks.php
-
-# Disable maintenance mode
-toggle_maintenance_mode "false" "$directory"
-
-# Final site availability check
-if check_site_availability; then
-    echo "Upgrade completed successfully and site is available."
+# Check if upgrade was successful
+if sudo -u "$APACHE_USER" php admin/cli/checks.php | grep -q "Error"; then
+  echo "Upgrade failed: The Moodle checks.php script reported an error."
+  exit 1
 else
+  echo "Moodle checks passed. Proceeding with upgrade."
+
+  # Disable maintenance mode
+  toggle_maintenance_mode "false" "$directory"
+
+  # Final site availability check
+  if check_site_availability; then
+    echo "Upgrade completed successfully and site is available."
+  else
     echo "Warning: Upgrade completed but site availability check failed."
     echo "You may need to manually check the site."
+  fi
 fi
 
 echo "Moodle upgrade completed at $(date)"
