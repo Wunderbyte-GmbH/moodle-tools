@@ -519,6 +519,74 @@ handle_git_checkout() {
     return 0
 }
 
+# Function to verify upgrade success by comparing database version with version.php
+verify_upgrade_success() {
+    local working_dir="$1"
+
+    echo "Verifying upgrade success by comparing database and file versions..."
+
+    # Check if version.php exists
+    if [[ ! -f "$working_dir/version.php" ]]; then
+        echo "ERROR: version.php not found at $working_dir/version.php"
+        return 1
+    fi
+
+    # Extract version using bash/grep - much simpler
+    local file_version=$(grep '^\$version' "$working_dir/version.php" | cut -d'=' -f2 | cut -d';' -f1 | tr -d ' ')
+
+    if [[ -z "$file_version" ]]; then
+        echo "ERROR: Could not extract version from version.php using bash"
+        echo "Let's see what the version line looks like:"
+        grep '^\$version' "$working_dir/version.php" || echo "No version line found"
+        return 1
+    fi
+
+    # Get version from database based on database type
+    local db_version=""
+
+    case "$MOODLE_DBTYPE" in
+        "mysqli"|"mariadb")
+            if command -v mysql &> /dev/null; then
+                db_version=$(mysql -h "$MOODLE_DBHOST" -u "$MOODLE_DBUSER" -p"$MOODLE_DBPASS" -D "$MOODLE_DBNAME" -N -s -e "SELECT value FROM mdl_config WHERE name='version';" 2>&1)
+            else
+                echo "ERROR: mysql client not found"
+                return 1
+            fi
+            ;;
+        "pgsql")
+            if command -v psql &> /dev/null; then
+                export PGPASSWORD="$MOODLE_DBPASS"
+                db_version=$(psql -h "$MOODLE_DBHOST" -U "$MOODLE_DBUSER" -d "$MOODLE_DBNAME" -t -c "SELECT value FROM mdl_config WHERE name='version';" 2>&1 | xargs)
+                unset PGPASSWORD
+            else
+                echo "ERROR: psql client not found"
+                return 1
+            fi
+            ;;
+        *)
+            echo "ERROR: Unsupported database type for version verification: $MOODLE_DBTYPE"
+            return 1
+            ;;
+    esac
+
+    if [[ -z "$db_version" ]]; then
+        echo "ERROR: Could not retrieve version from database"
+        return 1
+    fi
+
+    # Compare versions
+    if [[ "$file_version" == "$db_version" ]]; then
+        echo "SUCCESS: Database version matches version.php - upgrade completed successfully!"
+        return 0
+    else
+        echo "ERROR: Version mismatch detected!"
+        echo "  File version:     $file_version"
+        echo "  Database version: $db_version"
+        echo "  This indicates the upgrade failed or was incomplete."
+        return 1
+    fi
+}
+
 # Get the script's directory
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
@@ -599,6 +667,18 @@ announce_command sudo find . -type f -exec chmod 644 {} \;
 # Perform the upgrade for Moodle
 announce_command sudo -u "$APACHE_USER" php admin/cli/upgrade.php --non-interactive
 
+# Verify upgrade success by comparing versions
+if ! verify_upgrade_success "$directory"; then
+    echo "ERROR: Upgrade verification failed!"
+    echo "Keeping maintenance mode enabled for safety."
+    echo "Please check the version mismatch and resolve any issues."
+
+    # Disable maintenance mode
+    toggle_maintenance_mode "false" "$directory"
+
+    exit 1
+fi
+
 # Check if everything is OK for Moodle
 announce_command sudo -u "$APACHE_USER" php admin/cli/checks.php
 
@@ -608,6 +688,10 @@ if echo "$CHECKS_OUTPUT" | grep -q "Error"; then
     echo "Upgrade check failed: 'checks.php' output contains errors."
     echo "Details:"
     echo "$CHECKS_OUTPUT"
+
+    # Disable maintenance mode
+    toggle_maintenance_mode "false" "$directory"
+
     exit 1
 fi
 
