@@ -72,13 +72,20 @@ read_config() {
         echo "Attempting config extraction method..."
 
         # Use grep to extract values directly from the file
-        local db_type=$(grep -E '^\$CFG->dbtype\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
-        local db_host=$(grep -E '^\$CFG->dbhost\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
-        local db_name=$(grep -E '^\$CFG->dbname\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
-        local db_user=$(grep -E '^\$CFG->dbuser\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
-        local db_pass=$(grep -E '^\$CFG->dbpass\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
-        local data_root=$(grep -E '^\$CFG->dataroot\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
-        local www_root=$(grep -E '^\$CFG->wwwroot\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
+        local db_host
+        local db_type
+        local db_name
+        local db_user
+        local db_pass
+        local data_root
+        local www_root
+        db_type=$(sed -nE 's/^[[:space:]]*\$CFG->dbtype\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
+        db_host=$(sed -nE 's/^[[:space:]]*\$CFG->dbhost\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
+        db_name=$(sed -nE 's/^[[:space:]]*\$CFG->dbname\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
+        db_user=$(sed -nE 's/^[[:space:]]*\$CFG->dbuser\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
+        db_pass=$(sed -nE 's/^[[:space:]]*\$CFG->dbpass\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
+        data_root=$(sed -nE 's/^[[:space:]]*\$CFG->dataroot\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
+        www_root=$(sed -nE 's/^[[:space:]]*\$CFG->wwwroot\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
 
         # If we still don't have values, fail
         if [[ -z "$db_type" || -z "$db_name" ]]; then
@@ -321,8 +328,10 @@ create_database_backup() {
     fi
 
     # Set backup filename with current date and hostname
-    local current_date=$(date +"%Y%m%d_%H%M%S")
-    local hostname=$(hostname)
+    local current_date
+    local hostname
+    current_date=$(date +"%Y%m%d_%H%M%S")
+    hostname=$(hostname)
     local backup_file="${MOODLE_BACKUP_DIR}/db_${hostname}_${current_date}.sql.gz"
 
     # Check if gzip is available
@@ -422,7 +431,8 @@ setup_ssh_key() {
 # Function to detect the Apache/web server user
 detect_apache_user() {
     # Try to detect Apache user from running processes
-    local apache_user=$(ps aux | grep -E '[a]pache|[h]ttpd' | grep -v root | awk '{print $1}' | uniq)
+    local apache_user
+    apache_user=$(ps aux | grep -E '[a]pache|[h]ttpd' | grep -v root | awk '{print $1}' | uniq)
 
     # If not found, try some common web server users
     if [[ -z "$apache_user" ]]; then
@@ -462,7 +472,8 @@ handle_git_checkout() {
     announce_command git fetch --all --tags
 
     # Get the current branch
-    local current_branch=$(git branch --show-current)
+    local current_branch
+    current_branch=$(git branch --show-current)
     echo "Current branch: $current_branch"
 
     # --- Get the last 5 updated local branches ---
@@ -514,7 +525,7 @@ handle_git_checkout() {
     local choice
 
     while [[ "$valid_choice" != "true" ]]; do
-        read -p "Enter your choice (0-$max_option): " choice
+        read -rp "Enter your choice (0-$max_option): " choice
 
         if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -le "$max_option" ]]; then
             valid_choice=true
@@ -563,7 +574,8 @@ verify_upgrade_success() {
     fi
 
     # Extract version using bash/grep - much simpler
-    local file_version=$(grep '^\$version' "$working_dir/version.php" | cut -d'=' -f2 | cut -d';' -f1 | tr -d ' ')
+    local file_version
+    file_version=$(grep '^\$version' "$working_dir/version.php" | cut -d'=' -f2 | cut -d';' -f1 | tr -d ' ')
 
     if [[ -z "$file_version" ]]; then
         echo "ERROR: Could not extract version from version.php using bash"
@@ -606,8 +618,10 @@ verify_upgrade_success() {
     fi
 
     # Normalize versions by removing trailing .00 if present
-    local normalized_file_version=$(echo "$file_version" | sed 's/\.00$//')
-    local normalized_db_version=$(echo "$db_version" | sed 's/\.00$//')
+    local normalized_file_version
+    local normalized_db_version
+    normalized_file_version=$(echo "$file_version" | sed 's/\.00$//')
+    normalized_db_version=$(echo "$db_version" | sed 's/\.00$//')
     
     # Compare normalized versions
     if [[ "$normalized_file_version" == "$normalized_db_version" ]]; then
