@@ -1,42 +1,57 @@
 #!/bin/bash
 
-# Function to display usage information
-usage() {
-    echo "Usage: $0 -p|--project PROJECT_NAME"
-    echo "  -p, --project     Project name (e.g. WKO, MUSI)"
-    exit 1
+# Function to select mooddle dirroot.
+define_document_root(){
+    conf_files=$(apachectl -V 2>/dev/null | grep -oP '(?<=SERVER_CONFIG_FILE=").*?(?=")' | \
+        while read -r f; do
+            if [[ "$f" = /* ]]; then
+                echo "$f"
+            else
+                echo "/etc/httpd/$f"
+            fi
+        done)
+
+    # Collect includes from main configs
+    all_files=$(for f in $conf_files; do
+        if [ -f "$f" ]; then
+            grep -i "Include" "$f" | awk '{print $2}'
+        fi
+    done)
+
+    # Extract DocumentRoots
+    docroots=$(
+        for f in $conf_files $all_files /etc/httpd/conf.d/*.conf /etc/apache2/sites-enabled/*; do
+            [ -f "$f" ] && grep -i "DocumentRoot" "$f" | awk '{print $2}'
+        done | sort -u
+    )
+
+    # 2) Keep only git-controlled directories
+    gitroots=()
+    for d in $docroots; do
+        if [ -d "$d/.git" ]; then
+            gitroots+=("$d")
+        fi
+    done
+
+    # 3) Exit if none found
+    if [ ${#gitroots[@]} -eq 0 ]; then
+        echo "No git-controlled DocumentRoots found."
+        exit 1
+    fi
+
+    # 4) User selection menu
+    echo "Select a git-controlled DocumentRoot:"
+    PS3="Enter number: "
+    select choice in "${gitroots[@]}"; do
+        if [[ -n "$choice" ]]; then
+            dirroot=$choice
+            echo "You selected: $dirroot"
+            break
+        else
+            echo "Invalid selection."
+        fi
+    done
 }
-
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -p|--project)
-            project="$2"
-            shift 2
-            ;;
-        *)
-            usage
-            ;;
-    esac
-done
-
-# Validate required parameters
-if [ -z "$project" ]; then
-    echo "Error: Project name is required."
-    usage
-fi
-
-# Convert project name to all capital letters for tags
-if [[ ! "$project" =~ ^[A-Z]+$ ]]; then
-    project=${project^^}
-fi
-
-# Define lowercase project name for git remote
-project_lowercase=${project,,}
-
-# Global configuration variables
-# Pattern for finding branches - now uses project name
-BRANCH_PATTERN="${project}_*_ALLINONE"
 
 announce_command() {
     echo "Executing: $@"
@@ -51,41 +66,10 @@ read_config() {
     if [[ ! -f "$config_file" ]]; then
         echo "Error: config.php not found at $config_file." >&2
         return 1
-    fi
-
-    # Extract all configuration using PHP
-    local config_values=$(php -r '
-        // Define CLI_SCRIPT to allow command line execution
-        define("CLI_SCRIPT", true);
-
-        // Suppress errors to avoid notices from config.php
-        error_reporting(E_ERROR);
-
-        // Initialize $CFG object
-        $CFG = new stdClass();
-
-        // Include the config file
-        include("'"$config_file"'");
-
-        // Output all variables as shell exports with proper escaping
-        echo "export MOODLE_DBTYPE=" . escapeshellarg(isset($CFG->dbtype) ? $CFG->dbtype : "") . ";\n";
-        echo "export MOODLE_DBHOST=" . escapeshellarg(isset($CFG->dbhost) ? $CFG->dbhost : "") . ";\n";
-        echo "export MOODLE_DBNAME=" . escapeshellarg(isset($CFG->dbname) ? $CFG->dbname : "") . ";\n";
-        echo "export MOODLE_DBUSER=" . escapeshellarg(isset($CFG->dbuser) ? $CFG->dbuser : "") . ";\n";
-        echo "export MOODLE_DBPASS=" . escapeshellarg(isset($CFG->dbpass) ? $CFG->dbpass : "") . ";\n";
-        echo "export MOODLE_DATAROOT=" . escapeshellarg(isset($CFG->dataroot) ? $CFG->dataroot : "") . ";\n";
-        echo "export MOODLE_WWWROOT=" . escapeshellarg(isset($CFG->wwwroot) ? $CFG->wwwroot : "") . ";\n";
-
-        // Debug output to see what we got
-        echo "# Config loaded successfully. DB: $CFG->dbtype, Host: $CFG->dbhost, Name: $CFG->dbname\n";
-    ' 2>/dev/null)
-
-    # Check if we got any output
-    if [[ -z "$config_values" ]]; then
-        echo "Error: Failed to extract configuration from config.php." >&2
-
+    else
+    
         # Try a more direct approach to read the file
-        echo "Attempting alternative config extraction method..."
+        echo "Attempting config extraction method..."
 
         # Use grep to extract values directly from the file
         local db_type=$(grep -E '^\$CFG->dbtype\s*=' "$config_file" | cut -d"'" -f2 | cut -d'"' -f2)
@@ -98,7 +82,7 @@ read_config() {
 
         # If we still don't have values, fail
         if [[ -z "$db_type" || -z "$db_name" ]]; then
-            echo "Error: Could not extract configuration using alternative method." >&2
+            echo "Error: Could not extract configuration." >&2
             return 1
         fi
 
@@ -113,9 +97,6 @@ read_config() {
 
         echo "Alternative method extracted the following configuration:"
         echo -e "$config_values" | grep -v "DBPASS"
-    else
-        echo "Primary method successful:"
-        echo "$config_values" | grep -v "DBPASS" | grep -v "^#"
     fi
 
     # Evaluate the export statements to set all variables
@@ -130,7 +111,7 @@ read_config() {
     echo "Successfully loaded Moodle configuration."
     echo "Database type: $MOODLE_DBTYPE, Host: $MOODLE_DBHOST, Database: $MOODLE_DBNAME, User:$MOODLE_DBUSER"
 
-    # Set up backup directory path
+    # Set up backup dirroot path
     if [[ -n "$MOODLE_DATAROOT" ]]; then
         export MOODLE_BACKUP_DIR="${MOODLE_DATAROOT}/backups"
     else
@@ -141,14 +122,14 @@ read_config() {
     return 0
 }
 
-# Setup backup directory and clean up old backups if needed
-setup_backup_directory() {
-    # Create backup directory if it doesn't exist
+# Setup backup dirroot and clean up old backups if needed
+setup_backup_dirroot() {
+    # Create backup dirroot if it doesn't exist
     if [[ -d "$MOODLE_BACKUP_DIR" ]]; then
         cleanup_old_backups "$MOODLE_BACKUP_DIR"
     else
         mkdir -p "$MOODLE_BACKUP_DIR"
-        echo "Created backup directory at $MOODLE_BACKUP_DIR"
+        echo "Created backup dirroot at $MOODLE_BACKUP_DIR"
     fi
 
     return 0
@@ -158,7 +139,7 @@ setup_backup_directory() {
 check_git_status() {
     local repo_dir="$1"
 
-    # Make sure we're in the right directory
+    # Make sure we're in the right dirroot
     cd "$repo_dir" || return 1
 
     # Check git status
@@ -263,9 +244,9 @@ cleanup_old_backups() {
     local backup_dir="$1"
     local keep_count=2  # Keep only 2 most recent backups
 
-    # Check if backup directory exists
+    # Check if backup dirroot exists
     if [[ ! -d "$backup_dir" ]]; then
-        echo "No backup directory found at $backup_dir. Skipping cleanup."
+        echo "No backup dirroot found at $backup_dir. Skipping cleanup."
         return 0
     fi
 
@@ -326,16 +307,16 @@ create_database_backup() {
 
     echo "Creating database backup..."
 
-    # Create backup directory if it doesn't exist
+    # Create backup dirroot if it doesn't exist
     if [[ ! -d "$MOODLE_BACKUP_DIR" ]]; then
         mkdir -p "$MOODLE_BACKUP_DIR"
-        echo "Created backup directory at $MOODLE_BACKUP_DIR"
+        echo "Created backup dirroot at $MOODLE_BACKUP_DIR"
     fi
 
-    # Check if backup directory is writable by current user
+    # Check if backup dirroot is writable by current user
     if [[ ! -w "$MOODLE_BACKUP_DIR" ]]; then
-        echo "Error: Backup directory $MOODLE_BACKUP_DIR is not writable by current user."
-        echo "Please make sure the directory has appropriate permissions."
+        echo "Error: Backup dirroot $MOODLE_BACKUP_DIR is not writable by current user."
+        echo "Please make sure the dirroot has appropriate permissions."
         return 1
     fi
 
@@ -471,9 +452,9 @@ detect_apache_user() {
 
 # Function to handle git tag selection and checkout
 handle_git_checkout() {
-    local repo_dir="$1"
+    local repo_dir="$dirroot"
 
-    # Make sure we're in the right directory
+    # Make sure we're in the right dirroot
     cd "$repo_dir" || return 1
 
     # Fetch all tags and branches from origin
@@ -484,38 +465,32 @@ handle_git_checkout() {
     local current_branch=$(git branch --show-current)
     echo "Current branch: $current_branch"
 
-    # Get all local branches that match the pattern
-    echo "Finding local branches matching $BRANCH_PATTERN..."
-    local branches=()
-    while IFS= read -r branch; do
-        # Remove leading whitespace and asterisk
-        branch=$(echo "$branch" | sed 's/^\*\?[[:space:]]*//')
-        if [[ -n "$branch" && "$branch" == $BRANCH_PATTERN ]]; then
-            branches+=("$branch")
-        fi
-    done < <(git branch)
+    # --- Get the last 5 updated local branches ---
+    echo "Finding 5 most recently updated local branches..."
+    mapfile -t branches < <(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/heads/ | head -n 5)
+    branch_count=${#branches[@]}
 
-    # If no branches found, exit with clear message
-    if [[ ${#branches[@]} -eq 0 ]]; then
-        echo "Error: No local branches found matching pattern $BRANCH_PATTERN."
-        echo "Available branches:"
+    if [[ $branch_count -eq 0 ]]; then
+        echo "Error: No local branches found."
         git branch
-        echo "Aborting."
         exit 1
     fi
 
-    local branch_count=${#branches[@]}
-    echo "Found $branch_count matching branches."
+    echo "Found $branch_count branches."
 
-    # Get the last 5 tags starting with project name ordered by creation time (newest first)
-    echo "Finding recent ${project} tags by creation time..."
-    local project_tags=($(git for-each-ref --sort=-creatordate --format '%(refname:short)' --count=5 refs/tags/${project}-v*))
-    local tag_count=${#project_tags[@]}
+    # --- Get the last 8 tags ---
+    echo "Finding 8 most recent tags..."
+    mapfile -t project_tags < <(git for-each-ref --sort=-creatordate --format='%(refname:short)' refs/tags/ | head -n 8)
+    tag_count=${#project_tags[@]}
 
-    # Display options to the user
+    if [[ $tag_count -eq 0 ]]; then
+        echo "No tags found."
+    fi
+
+    # --- Display options to the user ---
     echo -e "\nPlease select which version to checkout:"
 
-    # Display branch options with numbers
+    # Branch options
     echo -e "\n--- BRANCH OPTIONS ---"
     for ((i=0; i<branch_count; i++)); do
         if [[ "${branches[$i]}" == "$current_branch" ]]; then
@@ -525,11 +500,10 @@ handle_git_checkout() {
         fi
     done
 
-    # Display available tags with numbers
+    # Tag options
     echo -e "\n--- TAG OPTIONS ---"
-    local tag_start=$branch_count
+    tag_start=$branch_count
     for ((i=0; i<tag_count; i++)); do
-        # Show tag with its creation date
         tag_date=$(git log -1 --format=%cd --date=short refs/tags/${project_tags[$i]} 2>/dev/null || echo "unknown date")
         echo "$((i+tag_start))) Tag: ${project_tags[$i]} (created: $tag_date)"
     done
@@ -650,28 +624,13 @@ verify_upgrade_success() {
     fi
 }
 
-# Get the script's directory
-SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+define_document_root
 
-# Prompt for the directory
-read -p "Enter the directory path where the git commands should be executed: " directory
-
-# Resolve the directory path relative to the script's directory
-if [[ ! -d "$directory" ]]; then
-    directory="$SCRIPT_DIR/$directory"
-fi
-
-# Check if the directory is a git repository
-if [[ ! -d "$directory/.git" ]]; then
-    echo "Error: $directory is not a git repository."
-    exit 1
-fi
-
-# Change to the specified directory
-announce_command cd "$directory"
+# Change to the specified dirroot
+announce_command cd "$dirroot"
 
 # Read all Moodle configuration at once
-if ! read_config "$directory/config.php"; then
+if ! read_config "$dirroot/config.php"; then
     echo "Failed to read Moodle configuration. Aborting."
     exit 1
 fi
@@ -701,11 +660,11 @@ while true; do
 done
 
 if [[ "$create_backup" == "y" ]]; then
-    # Setup backup directory and clean up old backups if needed
-    setup_backup_directory
+    # Setup backup dirroot and clean up old backups if needed
+    setup_backup_dirroot
 
     # Create a database backup
-    if ! create_database_backup "$directory"; then
+    if ! create_database_backup "$dirroot"; then
         while true; do
             read -p "Database backup failed. Continue without backup? (y/n): " continue_without_backup
             case "${continue_without_backup,,}" in
@@ -727,7 +686,7 @@ else
 fi
 
 # Check git repository status
-if ! check_git_status "$directory"; then
+if ! check_git_status "$dirroot"; then
     # If the function returns non-zero and it's not 2 (user chose to abort)
     if [[ $? -ne 2 ]]; then
         echo "Error checking git repository status."
@@ -755,10 +714,10 @@ if ! check_site_availability; then
 fi
 
 # Enable maintenance mode before update
-toggle_maintenance_mode "true" "$directory"
+toggle_maintenance_mode "true" "$dirroot"
 
 # Handle git checkout with tag selection
-handle_git_checkout "$directory"
+handle_git_checkout "$dirroot"
 
 # Change permission so Apache can execute all PHP files
 announce_command sudo chown root:"$APACHE_USER" . -R
@@ -773,13 +732,13 @@ announce_command sudo find . -type f -exec chmod 644 {} \;
 announce_command sudo -u "$APACHE_USER" php admin/cli/upgrade.php --non-interactive
 
 # Verify upgrade success by comparing versions
-if ! verify_upgrade_success "$directory"; then
+if ! verify_upgrade_success "$dirroot"; then
     echo "ERROR: Upgrade verification failed!"
     echo "Keeping maintenance mode enabled for safety."
     echo "Please check the version mismatch and resolve any issues."
 
     # Disable maintenance mode
-    toggle_maintenance_mode "false" "$directory"
+    toggle_maintenance_mode "false" "$dirroot"
 
     exit 1
 fi
@@ -795,13 +754,13 @@ if echo "$CHECKS_OUTPUT" | grep -q "Error"; then
     echo "$CHECKS_OUTPUT"
 
     # Disable maintenance mode
-    toggle_maintenance_mode "false" "$directory"
+    toggle_maintenance_mode "false" "$dirroot"
 
     exit 1
 fi
 
 # Disable maintenance mode
-toggle_maintenance_mode "false" "$directory"
+toggle_maintenance_mode "false" "$dirroot"
 
 # Final site availability check
 if check_site_availability; then
