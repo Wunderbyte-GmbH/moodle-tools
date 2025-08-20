@@ -1,10 +1,13 @@
 #!/bin/bash
 
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Function to display usage information
 usage() {
     echo "Usage: $0 -p|--project PROJECT_NAME -m|--mdlversion MOODLE_VERSION"
-    echo "  -p, --project     Project name (e.g. WKO)"
-    echo "  -m, --mdlversion  Moodle version (e.g., 403)"
+    echo "  -p, --project     Project name (e.g. WKO, MUSI)"
+    echo "  -m, --mdlversion  Moodle version (e.g., 405)"
     exit 1
 }
 
@@ -400,9 +403,28 @@ if [[ $continue_execution != "y" ]]; then
     exit 0
 fi
 
+# Call publish_plugins_to_client.sh script with project name and directory parameters
+plugin_script_path="$SCRIPT_DIR/publish_plugins_to_client.sh"
+if [ -f "$plugin_script_path" ]; then
+    echo "Running publish_plugins_to_client.sh with project: $project_lowercase"
+    echo "DEBUG: Current working directory: $(pwd)"
+    echo "DEBUG: Using plugin script from: $plugin_script_path"
+    echo "DEBUG: Passing repository path: $execute_directory"
+    bash "$plugin_script_path" "$project_lowercase" "$execute_directory"
+    if [ $? -ne 0 ]; then
+        echo "Error: publish_plugins_to_client.sh failed. Exiting..."
+        exit 1
+    fi
+else
+    echo "Warning: publish_plugins_to_client.sh not found at $plugin_script_path. Skipping plugin configuration."
+fi
+
 # Rebase with upstream Moodle
  git_cmd "fetch upstream"
  git_cmd "rebase upstream/$MOODLE_STABLE"
+
+# Add updated submodules to stable
+git_cmd "add ."
 
 # Amend the commit
 git_cmd "commit --amend --no-edit"
