@@ -73,11 +73,15 @@ for submodule_entry in "${SUBMODULES[@]}"; do
             
             # Push with force (since force push is enabled)
             echo "  Pushing to remote..."
-            if git push origin HEAD:main 2>&1; then
+            echo "  Command: git push --force origin HEAD:main"
+            git push --force origin HEAD:main
+            push_exit_code=$?
+            
+            if [ $push_exit_code -eq 0 ]; then
                 echo "  ✓ Successfully pushed"
                 exit 0
             else
-                echo "  ✗ Push failed"
+                echo "  ✗ Push failed with exit code: $push_exit_code"
                 exit 1
             fi
         )
