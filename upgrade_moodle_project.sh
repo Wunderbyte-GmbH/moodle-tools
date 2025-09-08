@@ -742,6 +742,12 @@ announce_command sudo find . -type d -exec chmod 755 {} \;
 # Change permissions for files
 announce_command sudo find . -type f -exec chmod 644 {} \;
 
+# Fix git hooks permissions (restore execute permission for post-merge hook)
+# Fix git hooks permissions (restore execute permission for post-merge hook if it exists)
+if [[ -f .git/hooks/post-merge ]]; then
+    announce_command sudo chmod +x .git/hooks/post-merge
+fi
+
 # Perform the upgrade for Moodle
 announce_command sudo -u "$APACHE_USER" php admin/cli/upgrade.php --non-interactive
 
