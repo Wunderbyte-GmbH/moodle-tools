@@ -1,0 +1,43 @@
+!/bin/bash
+# Solution 1: Git Post-Merge Hook (RECOMMENDED)
+# File: .git/hooks/post-merge
+
+#!/bin/bash
+# Git post-merge hook to auto-push to 'plus' remote after pulling from 'origin'
+
+LOG_FILE="/var/log/git-auto-push.log"
+REPO_PATH="$(pwd)"
+
+# Function to log messages
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+# Check if we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    log_message "ERROR: Not in a git repository"
+    exit 1
+fi
+
+log_message "Post-merge hook triggered in $REPO_PATH"
+
+# Get the current branch
+CURRENT_BRANCH=$(git branch --show-current)
+
+# Check if 'plus' remote exists
+if ! git remote | grep -q "^plus$"; then
+    log_message "ERROR: 'plus' remote not found"
+    exit 1
+fi
+
+# Push to 'plus' remote
+log_message "Pushing branch '$CURRENT_BRANCH' to 'plus' remote"
+
+if git push plus "$CURRENT_BRANCH"; then
+    log_message "SUCCESS: Pushed to plus remote successfully"
+else
+    log_message "ERROR: Failed to push to plus remote"
+    exit 1
+fi
+
+log_message "Auto-push completed"
