@@ -1,6 +1,12 @@
 #!/bin/bash
 
-# Function to select mooddle dirroot.
+# Define directories to search for Moodle installations
+MOODLE_SEARCH_DIRS=("/var/www")
+
+# Add another directory to search
+#MOODLE_SEARCH_DIRS+=("/path/to/another/moodle/parent/dir")
+
+# Function to select moodle dirroot
 define_document_root(){
     conf_files=$(apachectl -V 2>/dev/null | grep -oP '(?<=SERVER_CONFIG_FILE=").*?(?=")' | \
         while read -r f; do
@@ -25,21 +31,37 @@ define_document_root(){
         done | sort -u
     )
 
-    # 2) Keep only git-controlled directories
+    # Add subdirectories from defined search paths that contain Moodle installations
+    additional_dirs=""
+    for search_dir in "${MOODLE_SEARCH_DIRS[@]}"; do
+        if [[ -d "$search_dir" ]]; then
+            found_dirs=$(find "$search_dir" -maxdepth 1 -type d -name "*" 2>/dev/null | while read -r dir; do
+                if [[ -f "$dir/config.php" ]] && grep -qi "moodle" "$dir/config.php" 2>/dev/null; then
+                    echo "$dir"
+                fi
+            done)
+            additional_dirs="$additional_dirs$found_dirs"$'\n'
+        fi
+    done
+
+    # Combine DocumentRoots with additional directories
+    all_candidates=$(echo -e "$docroots\n$additional_dirs" | sort -u | grep -v '^$')
+
+    # Keep only git-controlled directories
     gitroots=()
-    for d in $docroots; do
+    for d in $all_candidates; do
         if [ -d "$d/.git" ]; then
             gitroots+=("$d")
         fi
     done
 
-    # 3) Exit if none found
+    # Exit if none found
     if [ ${#gitroots[@]} -eq 0 ]; then
         echo "No git-controlled DocumentRoots found."
         exit 1
     fi
 
-    # 4) User selection menu
+    # User selection menu
     echo "Select a git-controlled DocumentRoot:"
     PS3="Enter number: "
     select choice in "${gitroots[@]}"; do
@@ -67,7 +89,7 @@ read_config() {
         echo "Error: config.php not found at $config_file." >&2
         return 1
     else
-    
+
         # Try a more direct approach to read the file
         echo "Attempting config extraction method..."
 
@@ -405,26 +427,127 @@ find_ssh_key() {
     fi
 }
 
-# Function to setup SSH key for git operations
-setup_ssh_key() {
-    local ssh_key=""
-
-    if [[ $EUID -eq 0 ]]; then
-        # Running as root, look in /root/.ssh/
-        ssh_key=$(find_ssh_key "/root/.ssh")
-    else
-        # Running as a sudo user, look in the user's ~/.ssh/
-        ssh_key=$(find_ssh_key "$HOME/.ssh")
+# Function to check if SSH agent is available and has keys
+check_ssh_agent() {
+    # If SSH_AUTH_SOCK is not set but we have SUDO_USER, try to find the original SSH_AUTH_SOCK
+    if [[ -z "$SSH_AUTH_SOCK" ]] && [[ -n "$SUDO_USER" ]]; then
+        # Try to find SSH agent socket in /tmp
+        local possible_sockets=($(find /tmp -name "ssh-*" -type d 2>/dev/null | head -5))
+        for sock_dir in "${possible_sockets[@]}"; do
+            for socket in "$sock_dir"/*; do
+                if [[ -S "$socket" ]]; then
+                    # Test if this socket works
+                    if SSH_AUTH_SOCK="$socket" ssh-add -l >/dev/null 2>&1; then
+                        export SSH_AUTH_SOCK="$socket"
+                        break 2
+                    fi
+                fi
+            done
+        done
     fi
 
-    # If a key is found, configure git to use it
+    # Check if SSH_AUTH_SOCK is set (indicates SSH agent forwarding or local agent)
+    if [[ -n "$SSH_AUTH_SOCK" ]] && [[ -S "$SSH_AUTH_SOCK" ]]; then
+        # Check if ssh-add command is available
+        if command -v ssh-add >/dev/null 2>&1; then
+            # Check if there are any keys loaded in the agent
+            local key_count
+            key_count=$(ssh-add -l 2>/dev/null | grep -c "^[0-9]" || echo "0")
+
+            if [[ "$key_count" -gt 0 ]]; then
+                echo "SSH agent detected with $key_count key(s) loaded"
+                return 0
+            fi
+        fi
+    fi
+    return 1
+}
+
+# Function to setup SSH key for git operations
+setup_ssh_key() {
+    # First, try to use SSH agent (forwarded or local)
+    if check_ssh_agent; then
+        echo "Using SSH agent for git operations"
+
+        # Preserve SSH agent environment variables
+        export SSH_AUTH_SOCK="$SSH_AUTH_SOCK"
+
+        # Ensure no conflicting GIT_SSH_COMMAND
+        unset GIT_SSH_COMMAND
+
+        # Test SSH connection to GitHub
+        echo "Testing SSH connection to GitHub..."
+        local ssh_test_output
+        ssh_test_output=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -T git@github.com 2>&1)
+
+        if echo "$ssh_test_output" | grep -q "successfully authenticated"; then
+            echo "SSH connection to GitHub successful"
+        else
+            echo "Warning: SSH connection test failed, but continuing with SSH agent"
+        fi
+
+        return 0
+    fi
+
+    echo "SSH agent not available, looking for local SSH keys..."
+
+    # Fall back to local SSH keys - but prioritize the original user's keys
+    local ssh_key=""
+    local search_dirs=()
+
+    # If we have SUDO_USER, prioritize their SSH keys first
+    if [[ -n "$SUDO_USER" ]] && [[ "$SUDO_USER" != "root" ]]; then
+        local sudo_user_home
+        sudo_user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+        if [[ -n "$sudo_user_home" ]]; then
+            search_dirs+=("$sudo_user_home/.ssh")
+        fi
+    fi
+
+    # Then check root's keys as fallback
+    if [[ $EUID -eq 0 ]]; then
+        search_dirs+=("/root/.ssh")
+    else
+        search_dirs+=("$HOME/.ssh")
+    fi
+
+    # Search for SSH keys
+    for ssh_dir in "${search_dirs[@]}"; do
+        if [[ -d "$ssh_dir" ]]; then
+            # Look for keys in order of preference: ed25519, rsa, others
+            for key_type in id_ed25519 id_rsa id_ecdsa id_dsa; do
+                if [[ -f "$ssh_dir/$key_type" ]]; then
+                    ssh_key="$ssh_dir/$key_type"
+                    break
+                fi
+            done
+
+            # If we found a key, test it and break
+            if [[ -n "$ssh_key" ]]; then
+                echo "Testing SSH key: $ssh_key"
+                local key_test_output
+                key_test_output=$(ssh -i "$ssh_key" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -T git@github.com 2>&1)
+                
+                if echo "$key_test_output" | grep -q "successfully authenticated"; then
+                    echo "SSH key works! Using this key."
+                    break
+                else
+                    echo "SSH key doesn't work, trying next directory..."
+                    ssh_key=""  # Reset and continue searching
+                fi
+            fi
+        fi
+    done
+
+    # If a working key is found, configure git to use it
     if [[ -n "$ssh_key" ]]; then
-        export GIT_SSH_COMMAND="ssh -i $ssh_key"
+        export GIT_SSH_COMMAND="ssh -i $ssh_key -o StrictHostKeyChecking=no"
         echo "Using SSH key: $ssh_key"
         return 0
     else
-        echo "No SSH key found, using default SSH behavior"
-        return 0
+        echo "No working SSH key found, using default SSH behavior"
+        unset GIT_SSH_COMMAND
+        return 1
     fi
 }
 
@@ -464,12 +587,23 @@ detect_apache_user() {
 handle_git_checkout() {
     local repo_dir="$dirroot"
 
-    # Make sure we're in the right dirroot
+    # Make sure we're in the right directory
     cd "$repo_dir" || return 1
+
+    # Setup SSH authentication before any git operations
+    setup_ssh_key
 
     # Fetch all tags and branches from origin
     echo "Fetching latest tags and branches from origin..."
-    announce_command git fetch --all --tags
+
+    # Enhanced git command with proper SSH handling
+    if [[ -n "$SSH_AUTH_SOCK" ]]; then
+        announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git fetch --all --tags
+    elif [[ -n "$GIT_SSH_COMMAND" ]]; then
+        announce_command git fetch --all --tags
+    else
+        announce_command git fetch --all --tags
+    fi
 
     # Get the current branch
     local current_branch
@@ -544,21 +678,60 @@ handle_git_checkout() {
         if [[ "$selected_branch" == "$current_branch" ]]; then
             echo "Already on branch $selected_branch"
         else
-            announce_command git checkout "$selected_branch"
+            if [[ -n "$SSH_AUTH_SOCK" ]]; then
+                announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git checkout "$selected_branch"
+            elif [[ -n "$GIT_SSH_COMMAND" ]]; then
+                announce_command git checkout "$selected_branch"
+            else
+                announce_command git checkout "$selected_branch"
+            fi
         fi
 
-        announce_command git fetch origin
-        announce_command git pull
+        if [[ -n "$SSH_AUTH_SOCK" ]]; then
+            announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git fetch origin
+            announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git pull
+        elif [[ -n "$GIT_SSH_COMMAND" ]]; then
+            announce_command git fetch origin
+            announce_command git pull
+        else
+            announce_command git fetch origin
+            announce_command git pull
+        fi
     else
         # User selected a tag
         local tag_index=$((choice - branch_count))
         local selected_tag=${project_tags[$tag_index]}
         echo "Checking out tag $selected_tag..."
-        announce_command git fetch origin
-        announce_command git checkout "$selected_tag"
+        
+        if [[ -n "$SSH_AUTH_SOCK" ]]; then
+            announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git fetch origin
+            announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git checkout "$selected_tag"
+        elif [[ -n "$GIT_SSH_COMMAND" ]]; then
+            announce_command git fetch origin
+            announce_command git checkout "$selected_tag"
+        else
+            announce_command git fetch origin
+            announce_command git checkout "$selected_tag"
+        fi
     fi
 
     return 0
+}
+
+
+# Normalize versions by converting to consistent decimal representation
+normalize_version() {
+    local ver="$1"
+    
+    # Convert to float and back to remove trailing zeros
+    # This handles cases like 2024100706.10 -> 2024100706.1
+    if [[ "$ver" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        # Use awk for proper floating point conversion
+        echo "$ver" | awk '{printf "%.10g", $1}'
+    else
+        # If it's not a valid number, return as-is
+        echo "$ver"
+    fi
 }
 
 # Function to verify upgrade success by comparing database version with version.php
@@ -617,14 +790,21 @@ verify_upgrade_success() {
         return 1
     fi
 
-    # Normalize versions by removing trailing .00 if present
+    # Normalize versions for comparison
     local normalized_file_version
     local normalized_db_version
-    normalized_file_version=$(echo "$file_version" | sed 's/\.00$//')
-    normalized_db_version=$(echo "$db_version" | sed 's/\.00$//')
-    
-    # Compare normalized versions
-    if [[ "$normalized_file_version" == "$normalized_db_version" ]]; then
+
+    normalized_file_version=$(normalize_version "$file_version")
+    normalized_db_version=$(normalize_version "$db_version")
+
+    echo "Raw versions - File: $file_version, Database: $db_version"
+    echo "Normalized versions - File: $normalized_file_version, Database: $normalized_db_version"
+
+    # Compare normalized versions using awk for floating point comparison
+    local versions_match
+    versions_match=$(awk -v f="$normalized_file_version" -v d="$normalized_db_version" 'BEGIN {print (f == d ? "yes" : "no")}')
+
+    if [[ "$versions_match" == "yes" ]]; then
         echo "SUCCESS: Database version matches version.php - upgrade completed successfully!"
         echo "  File version:     $file_version"
         echo "  Database version: $db_version"
@@ -648,9 +828,6 @@ if ! read_config "$dirroot/config.php"; then
     echo "Failed to read Moodle configuration. Aborting."
     exit 1
 fi
-
-# Setup SSH key for git operations
-setup_ssh_key
 
 # Detect and set Apache user
 detect_apache_user
@@ -742,7 +919,6 @@ announce_command sudo find . -type d -exec chmod 755 {} \;
 # Change permissions for files
 announce_command sudo find . -type f -exec chmod 644 {} \;
 
-# Fix git hooks permissions (restore execute permission for post-merge hook)
 # Fix git hooks permissions (restore execute permission for post-merge hook if it exists)
 if [[ -f .git/hooks/post-merge ]]; then
     announce_command sudo chmod +x .git/hooks/post-merge
