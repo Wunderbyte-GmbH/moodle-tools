@@ -527,7 +527,7 @@ setup_ssh_key() {
                 echo "Testing SSH key: $ssh_key"
                 local key_test_output
                 key_test_output=$(ssh -i "$ssh_key" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -T git@github.com 2>&1)
-                
+
                 if echo "$key_test_output" | grep -q "successfully authenticated"; then
                     echo "SSH key works! Using this key."
                     break
@@ -702,7 +702,7 @@ handle_git_checkout() {
         local tag_index=$((choice - branch_count))
         local selected_tag=${project_tags[$tag_index]}
         echo "Checking out tag $selected_tag..."
-        
+
         if [[ -n "$SSH_AUTH_SOCK" ]]; then
             announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git fetch origin
             announce_command env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" git checkout "$selected_tag"
@@ -722,7 +722,7 @@ handle_git_checkout() {
 # Normalize versions by converting to consistent decimal representation
 normalize_version() {
     local ver="$1"
-    
+
     # Convert to float and back to remove trailing zeros
     # This handles cases like 2024100706.10 -> 2024100706.1
     if [[ "$ver" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
