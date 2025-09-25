@@ -44,8 +44,13 @@ define_document_root(){
         fi
     done
 
-    # Combine DocumentRoots with additional directories
-    all_candidates=$(echo -e "$docroots\n$additional_dirs" | sort -u | grep -v '^$')
+    # Combine DocumentRoots with additional directories and normalize paths
+    all_candidates=$(echo -e "$docroots\n$additional_dirs" | grep -v '^$' | while read -r path; do
+        # Remove trailing slashes and normalize the path
+        normalized_path=$(echo "$path" | sed 's|/*$||')
+        # Only output non-empty paths
+        [[ -n "$normalized_path" ]] && echo "$normalized_path"
+    done | sort -u)
 
     # Keep only git-controlled directories
     gitroots=()
