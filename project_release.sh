@@ -162,14 +162,21 @@ create_allinone_branch() {
     # This is the hash of the initial commit - using the example from your input
     git reset --hard f9903ed0a41ce4df0cb3628a06d6c0a9455ac75c
 
-    # Remove all files
+    # Deinitialize all submodules first to avoid permission issues
+    echo "Deinitializing submodules..."
+    git submodule deinit -f --all || true
+
+    # Remove all files including submodules
     echo "Removing all files..."
     rm -rf *
     rm -f .htaccess
 
+    # Also remove .gitmodules if it exists
+    rm -f .gitmodules
+
     # Add changes to git
     echo "Adding changes to git..."
-    git add .
+    git add -A
 
     # Commit changes (amend with empty commit allowed)
     echo "Committing changes..."
