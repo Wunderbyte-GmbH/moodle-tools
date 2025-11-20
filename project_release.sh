@@ -395,6 +395,11 @@ rm -rf question/type/multichoiceset
 rm -rf local/handout
 rm -rf blocks/xp
 rm -rf mod/zoom
+rm -rf blocks/quickmail/
+rm -rf mod/assign/submission/estream
+rm -rf report/advancedgrading
+rm -rf mod/quiz/accessrule/proctoring
+rm -rf mod/assign/submission/estream/
 
 # Also clean up any existing .git files in these locations
 find auth/saml2 payment/gateway/aau payment/gateway/saferpay -name ".git" -type f -delete 2>/dev/null || true
