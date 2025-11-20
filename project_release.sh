@@ -400,6 +400,8 @@ rm -rf mod/assign/submission/estream
 rm -rf report/advancedgrading
 rm -rf mod/quiz/accessrule/proctoring
 rm -rf mod/assign/submission/estream/
+rm -rf plagiarism/turnitin
+rm -rf question/type/gapfill
 
 # Also clean up any existing .git files in these locations
 find auth/saml2 payment/gateway/aau payment/gateway/saferpay -name ".git" -type f -delete 2>/dev/null || true
