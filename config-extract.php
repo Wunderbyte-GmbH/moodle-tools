@@ -82,4 +82,4 @@ if (!empty($plugin)) {
     $cfg[] = "];";
 }
 
-file_put_contents("$path/config-moodle.php", "<?php\n\n" . implode("\n", $cfg));
+file_put_contents("$path/config-moodle.php", "<?php" . PHP_EOL . PHP_EOL . implode(PHP_EOL, $cfg));
