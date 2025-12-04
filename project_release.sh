@@ -384,24 +384,10 @@ git_cmd "switch -f $PROJECT_STABLE"
 git_cmd "reset --hard wunderbyte/$PROJECT_STABLE"
 git_cmd "submodule sync"
 
-# Remove the directory
-#rm auth/saml2/.extlib/ -rf
-#rm local/wb_faq/lang/ -rf
-rm -rf auth/saml2/
-rm -rf local/wb_faq/lang/
-rm -rf payment/gateway/aau/
-rm -rf payment/gateway/saferpay/
-rm -rf question/type/multichoiceset
-rm -rf local/handout
-rm -rf blocks/xp
-rm -rf mod/zoom
-rm -rf blocks/quickmail/
-rm -rf mod/assign/submission/estream
-rm -rf report/advancedgrading
-rm -rf mod/quiz/accessrule/proctoring
-rm -rf mod/assign/submission/estream/
-rm -rf plagiarism/turnitin
-rm -rf question/type/gapfill
+# Remove the directories of the submodules to do a clean checkout
+git config -f .gitmodules --get-regexp path | while read -r k p; do
+  [ -d "$p" ] && [ "$(ls -A "$p")" ] && rm -rf "$p";
+done; \
 
 # Also clean up any existing .git files in these locations
 find auth/saml2 payment/gateway/aau payment/gateway/saferpay -name ".git" -type f -delete 2>/dev/null || true
