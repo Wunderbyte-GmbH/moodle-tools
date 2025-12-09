@@ -385,12 +385,16 @@ git_cmd "reset --hard wunderbyte/$PROJECT_STABLE"
 git_cmd "submodule sync"
 
 # Remove the directories of the submodules to do a clean checkout
-git config -f .gitmodules --get-regexp path | while read -r k p; do
-  [ -d "$p" ] && [ "$(ls -A "$p")" ] && rm -rf "$p";
-done; \
+git config -f .gitmodules --get-regexp path |
+while read -r _ path; do
+  if [ ! -d "$path" ]; then
+    echo "Skipping: $path does not exist."
+    continue
+  fi
 
-# Also clean up any existing .git files in these locations
-find auth/saml2 payment/gateway/aau payment/gateway/saferpay -name ".git" -type f -delete 2>/dev/null || true
+  echo "Deleting directory: $path"
+  rm -rf "$path"
+done
 
 # Update submodules
 git_cmd "submodule update --remote --init --recursive -f"
