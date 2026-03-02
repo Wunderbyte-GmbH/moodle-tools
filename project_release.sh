@@ -333,6 +333,13 @@ git_push() {
     fi
 }
 
+cleanup_local_tags() {
+  # Delete any "vX.Y.Z" style tags locally (typical upstream moodle tags),
+  # but keep your project tags like WKO-v...
+  echo "Cleaning local upstream tags (keeping ${project}-v... tags)..."
+  git tag -l 'v*' | xargs -r git tag -d
+}
+
 # Function to perform git tag
 git_tag() {
     local tag="$1"
@@ -378,8 +385,11 @@ validate_branches
 prompt_and_change_directory
 
 # Switch to the desired branch
-git_cmd "fetch wunderbyte"
-git_cmd "fetch --tags wunderbyte"
+#git_cmd "fetch wunderbyte"
+#git_cmd "fetch --tags wunderbyte"
+git_cmd "fetch --prune --prune-tags wunderbyte"
+cleanup_local_tags
+
 git_cmd "switch -f $PROJECT_STABLE"
 git_cmd "reset --hard wunderbyte/$PROJECT_STABLE"
 git_cmd "submodule sync"
@@ -426,8 +436,9 @@ else
 fi
 
 # Rebase with upstream Moodle
- git_cmd "fetch upstream"
- git_cmd "rebase upstream/$MOODLE_STABLE"
+# git_cmd "fetch --no-tags upstream"
+git_cmd "fetch --no-tags upstream $MOODLE_STABLE"
+git_cmd "rebase upstream/$MOODLE_STABLE"
 
 # Add updated submodules to stable
 git_cmd "add ."
@@ -536,10 +547,20 @@ fi
 git_tag $releasetag "Release information"
 
 # Push to the desired branch with tags
-git_push "wunderbyte" "$PROJECT_ALLINONE" "--tags"
+#git_push "wunderbyte" "$PROJECT_ALLINONE" "--tags"
+# push the branch
+git_push "wunderbyte" "$PROJECT_ALLINONE"
+
+# push ONLY the new tag
+echo "Pushing tag: $releasetag"
+git push wunderbyte "refs/tags/$releasetag"
+
 # Only push to project_lowercase if it exists
 if check_remote_exists "${project_lowercase}"; then
-    git_push "${project_lowercase}" "$PROJECT_ALLINONE" "--tags"
+    #git_push "${project_lowercase}" "$PROJECT_ALLINONE" "--tags"
+    git_push "${project_lowercase}" "$PROJECT_ALLINONE"
+    echo "Pushing tag: $releasetag to ${project_lowercase}"
+    git push "${project_lowercase}" "refs/tags/$releasetag"
 else
     echo "Remote ${project_lowercase} does not exist, skipping push to it."
 fi
