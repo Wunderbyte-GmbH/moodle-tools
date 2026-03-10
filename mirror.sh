@@ -2,8 +2,8 @@
 # =============================================================================
 # mirror.sh — Moodle Production → Test mirror
 #
-# Runs on PRODUCTION server via cron.
-# Reads all DB/path config directly from Moodle's config.php.
+# Runs on PRODUCTION server.
+# Reads DB/path config directly from Moodle's config.php.
 # Dumps DB into moodledata/mirror/ so rsync carries it automatically.
 # Executes post-import steps on test server via SSH.
 #
@@ -27,8 +27,6 @@ IFS=$'\n\t'
 
 # --- Production Moodle root (where config.php lives) -------------------------
 PROD_MOODLE_ROOT="/var/www/moodle"
-
-# --- PHP CLI binary on production --------------------------------------------
 PROD_PHP_CLI="php"
 
 # --- Overrides: Production DB ------------------------------------------------
@@ -51,12 +49,16 @@ OVERRIDE_PROD_WWWROOT=""
 # --- Test server connection ---------------------------------------------------
 TEST_HOST="test.example.com"
 TEST_SSH_USER="mirrordeploy"
-TEST_SSH_KEY="${HOME}/.ssh/mirror_id_ed25519"
 TEST_SSH_PORT="22"
+TEST_SSH_HOST_ALIAS=""
+
+SSH_EXTRA_OPTS=(
+    # "-A"
+)
 
 # --- Test server paths -------------------------------------------------------
-TEST_MOODLE_ROOT="/var/www/moodle-test"
-TEST_MOODLEDATA="/var/moodledata-test"
+TEST_MOODLE_ROOT="/usr/home/wundez/public_html/kswdev.wunderbyte.at/moodle"
+TEST_MOODLEDATA="/usr/home/wundez/public_html/kswdev.wunderbyte.at/moodledata"
 TEST_PHP_CLI="php"
 
 # --- Test DB -----------------------------------------------------------------
@@ -71,13 +73,11 @@ TEST_DB_PASS="CHANGE_ME"
 # Dump is written here, then picked up by rsync automatically.
 DUMP_SUBDIR="mirror"
 
-# --- Logging -----------------------------------------------------------------
 LOG_FILE="/var/log/moodle-mirror/mirror.log"
-LOG_MAX_BYTES=10485760         # rotate at 10 MB
+LOG_MAX_BYTES=10485760 # rotate at 10 MB
 
 # --- Lock file ---------------------------------------------------------------
 LOCK_FILE="/tmp/moodle_mirror.lock"
-
 # --- How many dump files to keep in moodledata/mirror/ -----------------------
 KEEP_DUMPS=3
 
@@ -122,7 +122,6 @@ for arg in "$@"; do
     esac
 done
 
-
 # =============================================================================
 # SECTION 3: LOGGING
 # =============================================================================
@@ -145,6 +144,7 @@ info()    { log "INFO " "$@"; }
 warn()    { log "WARN " "$@"; }
 error()   { log "ERROR" "$@"; }
 section() { info "=== $* ==="; }
+
 die() {
     error "$@"
     send_failure_notification "$*"
@@ -152,20 +152,18 @@ die() {
     exit 1
 }
 
-
 # =============================================================================
 # SECTION 4: NOTIFICATIONS
 # =============================================================================
 send_failure_notification() {
     [[ "${NOTIFY_ON_FAILURE}" == "true" ]] || return 0
-    [[ -n "${NOTIFY_EMAIL:-}"           ]] || return 0
+    [[ -n "${NOTIFY_EMAIL:-}" ]] || return 0
 
     local msg="$1"
     printf 'Subject: [Moodle Mirror] FAILED on %s\n\n%s\n\nLog: %s\n' \
         "$(hostname)" "$msg" "$LOG_FILE" \
         | sendmail "$NOTIFY_EMAIL" 2>/dev/null || true
 }
-
 
 # =============================================================================
 # SECTION 5: LOCK
@@ -188,7 +186,6 @@ release_lock() {
     rm -f "$LOCK_FILE"
     info "Lock released"
 }
-
 
 # =============================================================================
 # SECTION 6: CLEANUP + TRAPS
@@ -215,11 +212,9 @@ trap 'error "Unexpected error at line ${LINENO}."; \
       cleanup; exit 1' ERR
 trap 'warn "Signal received. Cleaning up."; cleanup; exit 130' INT TERM
 
-
 # =============================================================================
 # SECTION 7: READ CONFIG FROM MOODLE config.php
 # =============================================================================
-
 # Extracts a single $CFG property from config.php using PHP CLI.
 # Returns empty string on failure — caller decides if that is fatal.
 extract_cfg() {
@@ -236,7 +231,7 @@ extract_cfg() {
 # Maps Moodle's $CFG->dbtype string to our internal token (pgsql / mariadb).
 normalise_db_type() {
     local raw="$1"
-    case "${raw,,}" in          # lowercase
+    case "${raw,,}" in     # lowercase
         pgsql|postgres|postgresql) echo "pgsql" ;;
         mariadb|mysqli|mysql)      echo "mariadb" ;;
         *)
@@ -250,63 +245,45 @@ load_moodle_config() {
     section "Reading Moodle config.php"
 
     local config_php="${PROD_MOODLE_ROOT}/config.php"
-    [[ -f "$config_php" ]] \
-        || die "config.php not found at: ${config_php}"
+    [[ -f "$config_php" ]] || die "config.php not found at: ${config_php}"
 
-    # --- DB type -------------------------------------------------------------
     local raw_dbtype
     raw_dbtype=$(extract_cfg "dbtype")
     [[ -n "$raw_dbtype" ]] || die "Could not read \$CFG->dbtype from config.php"
     PROD_DB_TYPE=$(normalise_db_type "$raw_dbtype")
 
-    # --- DB host -------------------------------------------------------------
     PROD_DB_HOST=$(extract_cfg "dbhost")
     [[ -n "$PROD_DB_HOST" ]] || die "Could not read \$CFG->dbhost from config.php"
 
-    # --- DB port -------------------------------------------------------------
-    # Moodle stores port inside dbhost ("host:port") or in dboptions['dbport']
-    # We handle both.
     PROD_DB_PORT=$(
-        "$PROD_PHP_CLI" \
-            -d error_reporting=0 \
-            -r "
-                define('CLI_SCRIPT', true);
-                require('${PROD_MOODLE_ROOT}/config.php');
-                // Explicit port in dboptions
-                if (!empty(\$CFG->dboptions['dbport'])) {
-                    echo \$CFG->dboptions['dbport'];
-                    return;
-                }
-                // Port appended to dbhost (host:port)
-                if (strpos(\$CFG->dbhost, ':') !== false) {
-                    [, \$port] = explode(':', \$CFG->dbhost, 2);
-                    echo \$port;
-                    return;
-                }
-                // Defaults
-                echo (\$CFG->dbtype === 'pgsql') ? '5432' : '3306';
-            " 2>/dev/null || true
+        "$PROD_PHP_CLI" -d error_reporting=0 -r "
+            define('CLI_SCRIPT', true);
+            require('${PROD_MOODLE_ROOT}/config.php');
+            if (!empty(\$CFG->dboptions['dbport'])) {
+                echo \$CFG->dboptions['dbport'];
+                return;
+            }
+            if (strpos(\$CFG->dbhost, ':') !== false) {
+                [, \$port] = explode(':', \$CFG->dbhost, 2);
+                echo \$port;
+                return;
+            }
+            echo (\$CFG->dbtype === 'pgsql') ? '5432' : '3306';
+        " 2>/dev/null || true
     )
-    # Strip port from dbhost if it was embedded
     PROD_DB_HOST="${PROD_DB_HOST%%:*}"
 
-    # --- DB name -------------------------------------------------------------
     PROD_DB_NAME=$(extract_cfg "dbname")
     [[ -n "$PROD_DB_NAME" ]] || die "Could not read \$CFG->dbname from config.php"
 
-    # --- DB user -------------------------------------------------------------
     PROD_DB_USER=$(extract_cfg "dbuser")
     [[ -n "$PROD_DB_USER" ]] || die "Could not read \$CFG->dbuser from config.php"
 
-    # --- DB password ---------------------------------------------------------
     PROD_DB_PASS=$(extract_cfg "dbpass")
-    # Password may legitimately be empty (e.g. local socket auth) — no die here
 
-    # --- moodledata ----------------------------------------------------------
     PROD_MOODLEDATA=$(extract_cfg "dataroot")
     [[ -n "$PROD_MOODLEDATA" ]] || die "Could not read \$CFG->dataroot from config.php"
 
-    # --- wwwroot -------------------------------------------------------------
     PROD_WWWROOT=$(extract_cfg "wwwroot")
     [[ -n "$PROD_WWWROOT" ]] || die "Could not read \$CFG->wwwroot from config.php"
 
@@ -344,22 +321,15 @@ apply_overrides() {
     [[ "$any" == "true" ]] || info "No overrides applied"
 }
 
-
 # =============================================================================
 # SECTION 8: PREFLIGHT
 # =============================================================================
 preflight() {
     section "Preflight checks"
 
-    [[ -d "$PROD_MOODLEDATA" ]] \
-        || die "Production moodledata not found: $PROD_MOODLEDATA"
+    [[ -d "$PROD_MOODLEDATA" ]] || die "Production moodledata not found: $PROD_MOODLEDATA"
 
-    [[ -f "$TEST_SSH_KEY" ]] \
-        || die "SSH key not found: $TEST_SSH_KEY"
-
-    [[ "$(stat -c %a "$TEST_SSH_KEY")" == "600" ]] \
-        || die "SSH key permissions must be 600: $TEST_SSH_KEY"
-
+    command -v ssh &>/dev/null   || die "ssh not installed"
     command -v rsync &>/dev/null || die "rsync not installed"
 
     if [[ "$FILES_ONLY" != "true" ]]; then
@@ -369,40 +339,61 @@ preflight() {
         esac
     fi
 
-    # SSH connectivity
     info "Testing SSH to test server..."
     remote_exec "echo 'SSH OK'" \
-        || die "Cannot SSH to ${TEST_SSH_USER}@${TEST_HOST}"
+        || die "Cannot SSH to test server. Ensure the production server user can SSH non-interactively."
 
-    # Check test paths exist
     remote_exec "[[ -f '${TEST_MOODLE_ROOT}/config.php' ]]" \
         || die "Test config.php not found remotely: ${TEST_MOODLE_ROOT}/config.php"
 
     remote_exec "[[ -d '${TEST_MOODLEDATA}' ]]" \
         || die "Test moodledata not found remotely: ${TEST_MOODLEDATA}"
 
+    remote_exec "command -v ${TEST_PHP_CLI} >/dev/null" \
+        || die "PHP CLI not found on test server: ${TEST_PHP_CLI}"
+
+    case "$TEST_DB_TYPE" in
+        pgsql)
+            remote_exec "command -v psql >/dev/null" \
+                || die "psql not found on test server"
+            ;;
+        mariadb|mysql)
+            remote_exec "command -v mysql >/dev/null" \
+                || die "mysql client not found on test server"
+            ;;
+    esac
+
     info "Preflight OK"
 }
-
 
 # =============================================================================
 # SECTION 9: SSH HELPERS
 # =============================================================================
+ssh_target() {
+    if [[ -n "$TEST_SSH_HOST_ALIAS" ]]; then
+        printf '%s' "$TEST_SSH_HOST_ALIAS"
+    else
+        printf '%s@%s' "$TEST_SSH_USER" "$TEST_HOST"
+    fi
+}
+
 ssh_base() {
+    local target
+    target="$(ssh_target)"
+
     ssh \
-        -i  "$TEST_SSH_KEY" \
-        -p  "$TEST_SSH_PORT" \
-        -o  StrictHostKeyChecking=accept-new \
-        -o  BatchMode=yes \
-        -o  ConnectTimeout=30 \
-        "${TEST_SSH_USER}@${TEST_HOST}" \
+        -p "$TEST_SSH_PORT" \
+        -o StrictHostKeyChecking=accept-new \
+        -o BatchMode=yes \
+        -o ConnectTimeout=30 \
+        "${SSH_EXTRA_OPTS[@]}" \
+        "$target" \
         "$@"
 }
 
 remote_exec() {
     ssh_base "$@" 2>&1 | tee -a "$LOG_FILE"
 }
-
 
 # =============================================================================
 # SECTION 10: DUMP PRODUCTION DATABASE
@@ -416,24 +407,33 @@ dump_prod_db() {
 
     case "$PROD_DB_TYPE" in
         pgsql)
-            DUMP_LOCAL_PATH="${TEMP_DIR}/db_${ts}.dump"
-            info "Dumping (pg_dump custom format) → $DUMP_LOCAL_PATH"
+            DUMP_LOCAL_PATH="${TEMP_DIR}/db_${ts}.sql.gz"
+            local temp_sql="${TEMP_DIR}/db_${ts}.sql"
+            info "Dumping (pg_dump plain SQL + COPY + gzip) -> $DUMP_LOCAL_PATH"
 
-            PGPASSWORD="$PROD_DB_PASS" pg_dump \
+            export PGPASSWORD="$PROD_DB_PASS"
+            export LC_ALL="en_US.UTF-8"
+            export LANG="en_US.UTF-8"
+
+            pg_dump \
                 -h "$PROD_DB_HOST" \
                 -p "$PROD_DB_PORT" \
                 -U "$PROD_DB_USER" \
+                -d "$PROD_DB_NAME" \
                 --no-owner \
                 --no-acl \
-                -Fc \
-                -f "${DUMP_LOCAL_PATH}.inprogress" \
-                "$PROD_DB_NAME" \
-                2>&1 | tee -a "$LOG_FILE"
+                --clean \
+                --if-exists \
+                > "$temp_sql" 2>>"$LOG_FILE"
+
+            gzip -1 < "$temp_sql" > "${DUMP_LOCAL_PATH}.inprogress"
+            rm -f "$temp_sql"
+            unset PGPASSWORD
             ;;
 
-        mariadb)
+        mariadb|mysql)
             DUMP_LOCAL_PATH="${TEMP_DIR}/db_${ts}.sql.gz"
-            info "Dumping (mysqldump + gzip) → $DUMP_LOCAL_PATH"
+            info "Dumping (mysqldump + gzip) -> $DUMP_LOCAL_PATH"
 
             mysqldump \
                 -h "$PROD_DB_HOST" \
@@ -444,9 +444,12 @@ dump_prod_db() {
                 --quick \
                 --no-tablespaces \
                 --default-character-set=utf8mb4 \
+                --routines \
+                --triggers \
+                --events \
                 "$PROD_DB_NAME" \
-                2>&1 \
-                | gzip > "${DUMP_LOCAL_PATH}.inprogress"
+                2>>"$LOG_FILE" \
+                | gzip -1 > "${DUMP_LOCAL_PATH}.inprogress"
             ;;
     esac
 
@@ -465,7 +468,6 @@ dump_prod_db() {
     info "Dump rotation done (keeping ${KEEP_DUMPS})"
 }
 
-
 # =============================================================================
 # SECTION 11: SYNC MOODLEDATA (includes dump in mirror/ subdir)
 # =============================================================================
@@ -476,11 +478,15 @@ sync_moodledata() {
     for excl in "${RSYNC_EXCLUDES[@]}"; do
         exclude_args+=("--exclude=${excl}")
     done
-    # Always include our dump subdir explicitly — never accidentally excluded
     exclude_args+=("--include=${DUMP_SUBDIR}/")
 
     local dry_flag=()
     [[ "$DRY_RUN" == "true" ]] && dry_flag=("--dry-run")
+
+    local rsync_ssh="ssh -p ${TEST_SSH_PORT} -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
+    if [[ ${#SSH_EXTRA_OPTS[@]} -gt 0 ]]; then
+        rsync_ssh+=" $(printf '%q ' "${SSH_EXTRA_OPTS[@]}")"
+    fi
 
     rsync \
         --archive \
@@ -489,18 +495,30 @@ sync_moodledata() {
         --delete-excluded \
         --human-readable \
         --stats \
-        --rsh="ssh -i ${TEST_SSH_KEY} -p ${TEST_SSH_PORT} \
-               -o StrictHostKeyChecking=accept-new \
-               -o BatchMode=yes" \
+        --rsh="$rsync_ssh" \
         "${dry_flag[@]}" \
         "${exclude_args[@]}" \
         "${PROD_MOODLEDATA}/" \
-        "${TEST_SSH_USER}@${TEST_HOST}:${TEST_MOODLEDATA}/" \
+        "$(ssh_target):${TEST_MOODLEDATA}/" \
         2>&1 | tee -a "$LOG_FILE"
 
     info "moodledata rsync complete"
 }
 
+sync_dump_only() {
+    section "Syncing DB dump only to test server"
+
+    rsync \
+        --archive \
+        --compress \
+        --human-readable \
+        --rsh="ssh -p ${TEST_SSH_PORT} -o StrictHostKeyChecking=accept-new -o BatchMode=yes" \
+        "$DUMP_LOCAL_PATH" \
+        "$(ssh_target):${TEST_MOODLEDATA}/${DUMP_SUBDIR}/" \
+        2>&1 | tee -a "$LOG_FILE"
+
+    info "DB dump rsync complete"
+}
 
 # =============================================================================
 # SECTION 12: POST-IMPORT (executed on test server via SSH heredoc)
@@ -511,173 +529,217 @@ run_post_import() {
 
     # The dump landed at the same relative path under TEST_MOODLEDATA
     local remote_dump="${TEST_MOODLEDATA}/${DUMP_SUBDIR}/$(basename "$DUMP_LOCAL_PATH")"
-
     info "Remote dump path: $remote_dump"
 
-    # We pass variables explicitly via the heredoc — nothing relies on
-    # the remote environment being pre-configured.
-    ssh_base bash << ENDSSH 2>&1 | tee -a "$LOG_FILE"
+    ssh_base \
+        "TEST_MOODLE_ROOT=$(printf '%q' "$TEST_MOODLE_ROOT") \
+         TEST_MOODLEDATA=$(printf '%q' "$TEST_MOODLEDATA") \
+         TEST_PHP_CLI=$(printf '%q' "$TEST_PHP_CLI") \
+         TEST_DB_TYPE=$(printf '%q' "$TEST_DB_TYPE") \
+         TEST_DB_HOST=$(printf '%q' "$TEST_DB_HOST") \
+         TEST_DB_PORT=$(printf '%q' "$TEST_DB_PORT") \
+         TEST_DB_NAME=$(printf '%q' "$TEST_DB_NAME") \
+         TEST_DB_USER=$(printf '%q' "$TEST_DB_USER") \
+         TEST_DB_PASS=$(printf '%q' "$TEST_DB_PASS") \
+         PROD_WWWROOT=$(printf '%q' "$PROD_WWWROOT") \
+         DUMP_PATH=$(printf '%q' "$remote_dump") \
+         bash -s" <<'ENDSSH' 2>&1 | tee -a "$LOG_FILE"
 set -euo pipefail
 
-# ---- Variables injected from production mirror.sh --------------------------
-TEST_MOODLE_ROOT="${TEST_MOODLE_ROOT}"
-TEST_MOODLEDATA="${TEST_MOODLEDATA}"
-TEST_PHP_CLI="${TEST_PHP_CLI}"
-TEST_DB_TYPE="${TEST_DB_TYPE}"
-TEST_DB_HOST="${TEST_DB_HOST}"
-TEST_DB_PORT="${TEST_DB_PORT}"
-TEST_DB_NAME="${TEST_DB_NAME}"
-TEST_DB_USER="${TEST_DB_USER}"
-TEST_DB_PASS="${TEST_DB_PASS}"
-PROD_WWWROOT="${PROD_WWWROOT}"
-DUMP_PATH="${remote_dump}"
 LOG="/tmp/moodle_mirror_postimport_$$.log"
-# ----------------------------------------------------------------------------
 
-log_r() { echo "[\$(date '+%Y-%m-%d %H:%M:%S')] [REMOTE] \$*" | tee -a "\$LOG"; }
-warn_r() { log_r "WARN \$*"; }
+log_r() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [REMOTE] $*" | tee -a "$LOG"; }
+warn_r() { log_r "WARN $*"; }
 
 log_r "=== Post-import start ==="
 
-# ---- 0. Protect config.php -------------------------------------------------
-CONFIG="\${TEST_MOODLE_ROOT}/config.php"
-CONFIG_BK="/tmp/moodle_config_protected_\$\$.php"
+CONFIG="${TEST_MOODLE_ROOT}/config.php"
+CONFIG_BK="/tmp/moodle_config_protected_$$.php"
 
-[[ -f "\$CONFIG" ]] || { log_r "ERROR: config.php missing at \$CONFIG"; exit 1; }
-cp -p "\$CONFIG" "\$CONFIG_BK"
-log_r "config.php protected → \$CONFIG_BK"
+[[ -f "$CONFIG" ]] || { log_r "ERROR: config.php missing at $CONFIG"; exit 1; }
+cp -p "$CONFIG" "$CONFIG_BK"
+log_r "config.php protected -> $CONFIG_BK"
 
 restore_config() {
-    cp -p "\$CONFIG_BK" "\$CONFIG"
-    rm -f "\$CONFIG_BK"
+    cp -p "$CONFIG_BK" "$CONFIG"
+    rm -f "$CONFIG_BK"
     log_r "config.php restored"
 }
 trap restore_config EXIT
 
-# ---- 1. Maintenance mode ON ------------------------------------------------
 log_r "Enabling maintenance mode..."
-"\$TEST_PHP_CLI" "\${TEST_MOODLE_ROOT}/admin/cli/maintenance.php" \
-    --enable 2>&1 | tee -a "\$LOG" \
+"$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/maintenance.php" \
+    --enable 2>&1 | tee -a "$LOG" \
     || warn_r "Could not enable maintenance mode"
 
-# ---- 2. Import database dump -----------------------------------------------
-log_r "Importing database: \$DUMP_PATH"
-[[ -f "\$DUMP_PATH" ]] || { log_r "ERROR: dump not found at \$DUMP_PATH"; exit 1; }
+log_r "Importing database: $DUMP_PATH"
+[[ -f "$DUMP_PATH" ]] || { log_r "ERROR: dump not found at $DUMP_PATH"; exit 1; }
 
-case "\$TEST_DB_TYPE" in
+case "$TEST_DB_TYPE" in
     pgsql)
-        export PGPASSWORD="\$TEST_DB_PASS"
+        export PGPASSWORD="$TEST_DB_PASS"
 
-        log_r "Terminating active test DB connections..."
-        psql -h "\$TEST_DB_HOST" -p "\$TEST_DB_PORT" \
-             -U "\$TEST_DB_USER" -d postgres \
-             -c "SELECT pg_terminate_backend(pid)
-                 FROM pg_stat_activity
-                 WHERE datname = '\${TEST_DB_NAME}'
-                   AND pid <> pg_backend_pid();" \
-             2>&1 | tee -a "\$LOG"
+        log_r "Resetting PostgreSQL public schema on test database..."
+        psql \
+            -h "$TEST_DB_HOST" \
+            -p "$TEST_DB_PORT" \
+            -U "$TEST_DB_USER" \
+            -d "$TEST_DB_NAME" \
+            -v ON_ERROR_STOP=1 \
+            -c "DROP SCHEMA IF EXISTS public CASCADE;" \
+            >>"$LOG" 2>&1
 
-        log_r "Dropping test DB..."
-        psql -h "\$TEST_DB_HOST" -p "\$TEST_DB_PORT" \
-             -U "\$TEST_DB_USER" -d postgres \
-             -c "DROP DATABASE IF EXISTS \"\${TEST_DB_NAME}\";" \
-             2>&1 | tee -a "\$LOG"
+        psql \
+            -h "$TEST_DB_HOST" \
+            -p "$TEST_DB_PORT" \
+            -U "$TEST_DB_USER" \
+            -d "$TEST_DB_NAME" \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE SCHEMA public AUTHORIZATION \"$TEST_DB_USER\";" \
+            >>"$LOG" 2>&1
 
-        log_r "Creating test DB..."
-        psql -h "\$TEST_DB_HOST" -p "\$TEST_DB_PORT" \
-             -U "\$TEST_DB_USER" -d postgres \
-             -c "CREATE DATABASE \"\${TEST_DB_NAME}\" OWNER \"\${TEST_DB_USER}\";" \
-             2>&1 | tee -a "\$LOG"
+        psql \
+            -h "$TEST_DB_HOST" \
+            -p "$TEST_DB_PORT" \
+            -U "$TEST_DB_USER" \
+            -d "$TEST_DB_NAME" \
+            -v ON_ERROR_STOP=1 \
+            -c "GRANT ALL ON SCHEMA public TO \"$TEST_DB_USER\";" \
+            >>"$LOG" 2>&1 || true
 
-        log_r "Restoring dump..."
-        pg_restore \
-            -h "\$TEST_DB_HOST" -p "\$TEST_DB_PORT" \
-            -U "\$TEST_DB_USER" \
-            -d "\$TEST_DB_NAME" \
-            --no-owner --no-acl \
-            --exit-on-error \
-            "\$DUMP_PATH" \
-            2>&1 | tee -a "\$LOG"
+        psql \
+            -h "$TEST_DB_HOST" \
+            -p "$TEST_DB_PORT" \
+            -U "$TEST_DB_USER" \
+            -d "$TEST_DB_NAME" \
+            -v ON_ERROR_STOP=1 \
+            -c "GRANT ALL ON SCHEMA public TO public;" \
+            >>"$LOG" 2>&1 || true
+
+        log_r "Restoring PostgreSQL plain SQL dump into existing database..."
+        gzip -dc "$DUMP_PATH" \
+            | psql \
+                -h "$TEST_DB_HOST" \
+                -p "$TEST_DB_PORT" \
+                -U "$TEST_DB_USER" \
+                -d "$TEST_DB_NAME" \
+                -q \
+                -v ON_ERROR_STOP=1 \
+                > /dev/null \
+                2>>"$LOG"
         ;;
 
     mariadb|mysql)
-        log_r "Dropping and recreating test DB..."
-        mysql \
-            -h "\$TEST_DB_HOST" -P "\$TEST_DB_PORT" \
-            -u "\$TEST_DB_USER" -p"\$TEST_DB_PASS" \
-            -e "DROP DATABASE IF EXISTS \`\${TEST_DB_NAME}\`;
-                CREATE DATABASE \`\${TEST_DB_NAME}\`
-                CHARACTER SET utf8mb4
-                COLLATE utf8mb4_unicode_ci;" \
-            2>&1 | tee -a "\$LOG"
+        export MYSQL_PWD="$TEST_DB_PASS"
 
-        log_r "Importing dump..."
-        zcat "\$DUMP_PATH" \
+        log_r "Dropping existing views in MariaDB test database..."
+        mysql \
+            -h "$TEST_DB_HOST" -P "$TEST_DB_PORT" -u "$TEST_DB_USER" \
+            -Nse "
+SET SESSION group_concat_max_len = 1000000;
+SELECT IFNULL(
+  CONCAT(
+    'DROP VIEW IF EXISTS ',
+    GROUP_CONCAT(CONCAT('\`', table_name, '\`') SEPARATOR ','),
+    ';'
+  ),
+  'SELECT 1;'
+)
+FROM information_schema.views
+WHERE table_schema = '$TEST_DB_NAME';
+" "$TEST_DB_NAME" \
             | mysql \
-                -h "\$TEST_DB_HOST" -P "\$TEST_DB_PORT" \
-                -u "\$TEST_DB_USER" -p"\$TEST_DB_PASS" \
-                "\$TEST_DB_NAME" \
-            2>&1 | tee -a "\$LOG"
+                -h "$TEST_DB_HOST" -P "$TEST_DB_PORT" -u "$TEST_DB_USER" \
+                "$TEST_DB_NAME" \
+            2>&1 | tee -a "$LOG" || true
+
+        log_r "Dropping existing tables in MariaDB test database..."
+        mysql \
+            -h "$TEST_DB_HOST" -P "$TEST_DB_PORT" -u "$TEST_DB_USER" \
+            -Nse "
+SET SESSION group_concat_max_len = 1000000;
+SET FOREIGN_KEY_CHECKS=0;
+SELECT IFNULL(
+  CONCAT(
+    'DROP TABLE IF EXISTS ',
+    GROUP_CONCAT(CONCAT('\`', table_name, '\`') SEPARATOR ','),
+    ';'
+  ),
+  'SELECT 1;'
+)
+FROM information_schema.tables
+WHERE table_schema = '$TEST_DB_NAME'
+  AND table_type = 'BASE TABLE';
+" "$TEST_DB_NAME" \
+            | mysql \
+                -h "$TEST_DB_HOST" -P "$TEST_DB_PORT" -u "$TEST_DB_USER" \
+                "$TEST_DB_NAME" \
+            2>&1 | tee -a "$LOG"
+
+        log_r "Restoring MariaDB dump into existing database..."
+        gzip -dc "$DUMP_PATH" \
+            | mysql \
+                -h "$TEST_DB_HOST" -P "$TEST_DB_PORT" -u "$TEST_DB_USER" \
+                "$TEST_DB_NAME" \
+            2>&1 | tee -a "$LOG"
+
+        unset MYSQL_PWD
         ;;
 esac
+
 log_r "Database import complete"
 
-# ---- 3. Restore config.php (must happen before any PHP CLI calls) ----------
 restore_config
-trap - EXIT    # disable the trap — already restored
+trap - EXIT
 
-# ---- 4. Sanitise DB --------------------------------------------------------
 log_r "Reading test wwwroot and dataroot from test config.php..."
 
 get_cfg() {
-    "\$TEST_PHP_CLI" -d error_reporting=0 -r "
+    "$TEST_PHP_CLI" -d error_reporting=0 -r "
         define('CLI_SCRIPT', true);
-        require('\${TEST_MOODLE_ROOT}/config.php');
-        echo \\\$CFG->\$1 ?? '';
+        require('${TEST_MOODLE_ROOT}/config.php');
+        echo \$CFG->$1 ?? '';
     " 2>/dev/null
 }
 
-TEST_WWWROOT=\$(get_cfg wwwroot)
-TEST_DATAROOT=\$(get_cfg dataroot)
+TEST_WWWROOT=$(get_cfg wwwroot)
+TEST_DATAROOT=$(get_cfg dataroot)
 
-log_r "Test wwwroot : \$TEST_WWWROOT"
-log_r "Test dataroot: \$TEST_DATAROOT"
+log_r "Test wwwroot : $TEST_WWWROOT"
+log_r "Test dataroot: $TEST_DATAROOT"
 
 log_r "Running wwwroot search/replace in DB..."
-"\$TEST_PHP_CLI" "\${TEST_MOODLE_ROOT}/admin/cli/replace.php" \
-    --search="\$PROD_WWWROOT" \
-    --replace="\$TEST_WWWROOT" \
+"$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/replace.php" \
+    --search="$PROD_WWWROOT" \
+    --replace="$TEST_WWWROOT" \
     --non-interactive \
-    2>&1 | tee -a "\$LOG" || warn_r "replace.php returned non-zero"
+    2>&1 | tee -a "$LOG" || warn_r "replace.php returned non-zero"
 
 set_cfg() {
-    "\$TEST_PHP_CLI" "\${TEST_MOODLE_ROOT}/admin/cli/cfg.php" \
-        --name="\$1" --set="\$2" \
-        2>&1 | tee -a "\$LOG" \
-        || warn_r "Could not set cfg \$1"
+    "$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/cfg.php" \
+        --name="$1" --set="$2" \
+        2>&1 | tee -a "$LOG" \
+        || warn_r "Could not set cfg $1"
 }
 
-set_cfg wwwroot     "\$TEST_WWWROOT"
-set_cfg dataroot    "\$TEST_DATAROOT"
+set_cfg wwwroot     "$TEST_WWWROOT"
+set_cfg dataroot    "$TEST_DATAROOT"
 set_cfg noemailever 1
 
 log_r "Sanitisation complete"
 
-# ---- 5. Purge caches -------------------------------------------------------
 log_r "Purging caches..."
-"\$TEST_PHP_CLI" "\${TEST_MOODLE_ROOT}/admin/cli/purge_caches.php" \
-    2>&1 | tee -a "\$LOG" || warn_r "Cache purge failed"
+"$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/purge_caches.php" \
+    2>&1 | tee -a "$LOG" || warn_r "Cache purge failed"
 
-# ---- 6. Upgrade check ------------------------------------------------------
 log_r "Running upgrade check..."
-"\$TEST_PHP_CLI" "\${TEST_MOODLE_ROOT}/admin/cli/upgrade.php" \
+"$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/upgrade.php" \
     --non-interactive \
-    2>&1 | tee -a "\$LOG" || warn_r "upgrade.php returned non-zero"
+    2>&1 | tee -a "$LOG" || warn_r "upgrade.php returned non-zero"
 
-# ---- 7. Maintenance mode OFF -----------------------------------------------
 log_r "Disabling maintenance mode..."
-"\$TEST_PHP_CLI" "\${TEST_MOODLE_ROOT}/admin/cli/maintenance.php" \
-    --disable 2>&1 | tee -a "\$LOG" \
+"$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/maintenance.php" \
+    --disable 2>&1 | tee -a "$LOG" \
     || warn_r "Could not disable maintenance mode"
 
 log_r "=== Post-import complete ==="
@@ -685,7 +747,6 @@ ENDSSH
 
     info "Post-import finished"
 }
-
 
 # =============================================================================
 # SECTION 13: SUMMARY
@@ -700,12 +761,18 @@ print_summary() {
     section "Summary"
     info "Finished at  : $(date)"
     info "Duration     : ${mins}m ${secs}s"
-    info "Files synced : $( [[ "$DB_ONLY"    == "true" ]] && echo "skipped" || echo "yes")"
-    info "DB synced    : $( [[ "$FILES_ONLY" == "true" ]] && echo "skipped" || echo "yes")"
-    [[ "$DRY_RUN" == "true" ]] && info "*** DRY RUN — no changes were applied ***"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        info "Files synced : preview only"
+        info "DB synced    : skipped"
+        info "*** DRY RUN — no changes were applied ***"
+    else
+        info "Files synced : $( [[ "$DB_ONLY"    == "true" ]] && echo "skipped" || echo "yes")"
+        info "DB synced    : $( [[ "$FILES_ONLY" == "true" ]] && echo "skipped" || echo "yes")"
+    fi
+
     info "Log          : $LOG_FILE"
 }
-
 
 # =============================================================================
 # SECTION 14: MAIN
@@ -719,14 +786,11 @@ main() {
     [[ "$DB_ONLY"    == "true" ]] && info "*** DB ONLY ***"
 
     acquire_lock
-
     # Always read Moodle config.php first, then apply overrides
     load_moodle_config
     apply_overrides
-
     # Now we know PROD_MOODLEDATA — set up working dir inside it
     setup_temp
-
     preflight
 
     # DB dump goes first — lands in moodledata/mirror/ before rsync runs
@@ -740,6 +804,10 @@ main() {
     fi
 
     # Trigger import + sanitise on test server
+    if [[ "$DB_ONLY" == "true" ]] && [[ "$DRY_RUN" != "true" ]]; then
+        sync_dump_only
+    fi
+
     if [[ "$FILES_ONLY" != "true" ]] && [[ "$DRY_RUN" != "true" ]]; then
         run_post_import
     fi
