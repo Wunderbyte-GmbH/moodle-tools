@@ -57,8 +57,8 @@ SSH_EXTRA_OPTS=(
 )
 
 # --- Test server paths -------------------------------------------------------
-TEST_MOODLE_ROOT="/usr/home/wundez/public_html/kswdev.wunderbyte.at/moodle"
-TEST_MOODLEDATA="/usr/home/wundez/public_html/kswdev.wunderbyte.at/moodledata"
+TEST_MOODLE_ROOT="/var/www/moodle-test"
+TEST_MOODLEDATA="/var/moodledata-test"
 TEST_PHP_CLI="php"
 
 # --- Test DB -----------------------------------------------------------------
@@ -304,18 +304,17 @@ load_moodle_config() {
 
     # Read production Moodle version + release from version.php
     PROD_MOODLE_VERSION=$(
-        "$PROD_PHP_CLI" -d error_reporting=0 -r "
-            \$version = null; \$release = null;
-            require('${PROD_MOODLE_ROOT}/version.php');
-            echo \$version ?? '';
-        " 2>/dev/null || true
+        grep -E '^[[:space:]]*\$version[[:space:]]*=' "${PROD_MOODLE_ROOT}/version.php" \
+            | head -n1 \
+            | sed -nE 's/^[[:space:]]*\$version[[:space:]]*=[[:space:]]*([0-9.]+);.*$/\1/p' \
+            2>/dev/null || true
     )
+
     PROD_MOODLE_RELEASE=$(
-        "$PROD_PHP_CLI" -d error_reporting=0 -r "
-            \$version = null; \$release = null;
-            require('${PROD_MOODLE_ROOT}/version.php');
-            echo \$release ?? '';
-        " 2>/dev/null || true
+        grep -E '^[[:space:]]*\$release[[:space:]]*=' "${PROD_MOODLE_ROOT}/version.php" \
+            | head -n1 \
+            | sed -nE "s/^[[:space:]]*\$release[[:space:]]*=[[:space:]]*'(.*)';.*$/\1/p" \
+            2>/dev/null || true
     )
 
     info "DB type    : $PROD_DB_TYPE"
@@ -371,6 +370,11 @@ apply_overrides() {
 #   - If --force is set: logs a warning and continues automatically
 #   - If running non-interactively without --force: aborts
 # =============================================================================
+normalise_version_number() {
+    local v="$1"
+    echo "${v%%.*}"
+}
+
 compatibility_check() {
     section "Compatibility check: Production vs Test"
 
@@ -384,33 +388,31 @@ compatibility_check() {
 
     local test_version test_release
     test_version=$(
-        remote_exec_capture \
-            "$TEST_PHP_CLI -d error_reporting=0 -r \"
-                \\\$version = null;
-                require('${TEST_MOODLE_ROOT}/version.php');
-                echo \\\$version ?? '';
-            \""
+      remote_exec_capture "grep -E '^[[:space:]]*\\\$version[[:space:]]*=' '${TEST_MOODLE_ROOT}/version.php' \
+        | head -n1 \
+        | sed -nE 's/^[[:space:]]*\\\$version[[:space:]]*=[[:space:]]*([0-9.]+);.*$/\1/p'"
     )
+
     test_release=$(
-        remote_exec_capture \
-            "$TEST_PHP_CLI -d error_reporting=0 -r \"
-                \\\$release = null;
-                require('${TEST_MOODLE_ROOT}/version.php');
-                echo \\\$release ?? '';
-            \""
+      remote_exec_capture "grep -E '^[[:space:]]*\\\$release[[:space:]]*=' '${TEST_MOODLE_ROOT}/version.php' \
+        | head -n1 \
+        | sed -nE \"s/^[[:space:]]*\\\$release[[:space:]]*=[[:space:]]*'(.*)';.*$/\\1/p\""
     )
 
     info "Production core : $PROD_MOODLE_VERSION ($PROD_MOODLE_RELEASE)"
     info "Test core       : ${test_version:-unknown} (${test_release:-unknown})"
 
+    local prod_core_num test_core_num
+    prod_core_num=$(normalise_version_number "$PROD_MOODLE_VERSION")
+    test_core_num=$(normalise_version_number "$test_version")
+
     if [[ -z "$test_version" ]]; then
         issues+=("Could not read test Moodle version from ${TEST_MOODLE_ROOT}/version.php")
-    elif [[ "$PROD_MOODLE_VERSION" -lt "$test_version" ]] 2>/dev/null; then
+    elif [[ "$prod_core_num" -lt "$test_core_num" ]]; then
         issues+=("CORE DOWNGRADE: Production ($PROD_MOODLE_VERSION / $PROD_MOODLE_RELEASE) is OLDER than Test ($test_version / $test_release). Importing would downgrade the test database schema.")
-    elif [[ "$PROD_MOODLE_VERSION" -eq "$test_version" ]]; then
+    elif [[ "$prod_core_num" -eq "$test_core_num" ]]; then
         info "Core version match: OK"
     else
-        # Production is newer than test — normal upgrade path, just note it.
         info "Core upgrade: Production ($PROD_MOODLE_VERSION) is newer than Test ($test_version) — upgrade.php will run after import."
     fi
 
