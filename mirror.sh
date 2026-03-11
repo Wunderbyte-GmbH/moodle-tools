@@ -1027,33 +1027,14 @@ log_r "  replace: $TEST_WWWROOT"
     || warn_r "replace.php returned non-zero — check log for details"
 
 # ---------------------------------------------------------------------------
-# 6. Set critical config values explicitly via cfg.php
-#    Belt-and-suspenders: ensures mdl_config table is consistent with
-#    what config.php declares, even if replace.php missed an edge case.
-# ---------------------------------------------------------------------------
-set_cfg() {
-    "$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/cfg.php" \
-        --name="$1" --set="$2" \
-        2>&1 | tee -a "$LOG" \
-        || warn_r "Could not set cfg $1"
-}
-
-log_r "Setting critical config values..."
-set_cfg wwwroot     "$TEST_WWWROOT"
-set_cfg dataroot    "$TEST_DATAROOT"
-set_cfg noemailever 1
-
-log_r "Sanitisation complete"
-
-# ---------------------------------------------------------------------------
-# 7. Purge caches
+# 6. Purge caches
 # ---------------------------------------------------------------------------
 log_r "Purging caches..."
 "$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/purge_caches.php" \
     2>&1 | tee -a "$LOG" || warn_r "Cache purge failed"
 
 # ---------------------------------------------------------------------------
-# 8. Run upgrade
+# 7. Run upgrade
 # ---------------------------------------------------------------------------
 log_r "Running upgrade check..."
 "$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/upgrade.php" \
@@ -1061,7 +1042,7 @@ log_r "Running upgrade check..."
     2>&1 | tee -a "$LOG" || warn_r "upgrade.php returned non-zero"
 
 # ---------------------------------------------------------------------------
-# 9. Maintenance mode OFF
+# 8. Maintenance mode OFF
 # ---------------------------------------------------------------------------
 log_r "Disabling maintenance mode..."
 "$TEST_PHP_CLI" "${TEST_MOODLE_ROOT}/admin/cli/maintenance.php" \
