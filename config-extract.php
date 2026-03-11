@@ -4,7 +4,7 @@ define('CLI_SCRIPT', true);
 require_once("config.php");
 require_once($CFG->libdir.'/clilib.php');
 
-$path = $CFG->dataroot . "/stats";
+$path = $CFG->dataroot;
 
 $cfg = [];
 
