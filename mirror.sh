@@ -12,106 +12,89 @@
 #   ./mirror.sh --dry-run         # rsync dry-run, no DB import, no remote exec
 #   ./mirror.sh --files-only      # skip DB dump/import, sync moodledata only
 #   ./mirror.sh --db-only         # skip moodledata rsync, do DB only
+#
+# Optional:
+#   MIRROR_CONFIG=/path/to/mirror.config ./mirror.sh
 # =============================================================================
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # =============================================================================
-# SECTION 1: CONFIGURATION
+# SECTION 1: SCRIPT PATHS + EXTERNAL CONFIG
 # =============================================================================
-# Values are first read automatically from Moodle's config.php.
-# Set any variable below to override what was read from config.php.
-# Leave a variable empty ("") to use the auto-detected value.
-# =============================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "$0")"
+DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/mirror.config"
+CONFIG_FILE="${MIRROR_CONFIG:-$DEFAULT_CONFIG_FILE}"
 
-# --- Production Moodle root (where config.php lives) -------------------------
-PROD_MOODLE_ROOT="/var/www/moodle"
-PROD_PHP_CLI="php"
+# mirror.log always lives beside mirror.sh
+LOG_FILE="${SCRIPT_DIR}/mirror.log"
 
-# --- Overrides: Production DB ------------------------------------------------
-# Auto-detected from config.php. Override only if needed.
-OVERRIDE_PROD_DB_TYPE=""       # pgsql | mariadb
-OVERRIDE_PROD_DB_HOST=""
-OVERRIDE_PROD_DB_PORT=""
-OVERRIDE_PROD_DB_NAME=""
-OVERRIDE_PROD_DB_USER=""
-OVERRIDE_PROD_DB_PASS=""
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "ERROR: Config file not found: $CONFIG_FILE" >&2
+    echo "Expected default location: ${DEFAULT_CONFIG_FILE}" >&2
+    echo "Create mirror.config beside ${SCRIPT_NAME}, or run with:" >&2
+    echo "  MIRROR_CONFIG=/path/to/mirror.config ./${SCRIPT_NAME}" >&2
+    exit 1
+fi
 
-# --- Overrides: Production moodledata path -----------------------------------
-# Auto-detected from config.php ($CFG->dataroot). Override if needed.
-OVERRIDE_PROD_MOODLEDATA=""
-
-# --- Overrides: Production wwwroot -------------------------------------------
-# Auto-detected from config.php ($CFG->wwwroot). Override if needed.
-OVERRIDE_PROD_WWWROOT=""
-
-# --- Test server connection ---------------------------------------------------
-TEST_HOST="test.example.com"
-TEST_SSH_USER="mirrordeploy"
-TEST_SSH_PORT="22"
-TEST_SSH_HOST_ALIAS=""
-
-SSH_EXTRA_OPTS=(
-    # "-A"
-)
-
-# --- Test server paths -------------------------------------------------------
-TEST_MOODLE_ROOT="/var/www/moodle-test"
-TEST_MOODLEDATA="/var/moodledata-test"
-TEST_PHP_CLI="php"
-
-# --- Test DB -----------------------------------------------------------------
-TEST_DB_TYPE="pgsql"           # pgsql | mariadb
-TEST_DB_HOST="localhost"
-TEST_DB_PORT="5432"
-TEST_DB_NAME="moodle_test"
-TEST_DB_USER="moodle_test"
-TEST_DB_PASS="CHANGE_ME"
-
-# --- Dump location (relative to moodledata root) -----------------------------
-# Dump is written here, then picked up by rsync automatically.
-DUMP_SUBDIR="mirror"
-
-# --- DB replace options ------------------------------------------------------
-# These map directly to admin/tool/replace/cli/replace.php options.
-# REPLACE_SKIP_TABLES: comma-separated list of tables to skip during URL replace.
-# REPLACE_SHORTEN: set to true to shorten values if necessary.
-REPLACE_SKIP_TABLES=""
-REPLACE_SHORTEN=false
-
-LOG_FILE="/var/log/moodle-mirror/mirror.log"
-LOG_MAX_BYTES=10485760 # rotate at 10 MB
-
-# --- Lock file ---------------------------------------------------------------
-LOCK_FILE="/tmp/moodle_mirror.lock"
-
-# --- How many dump files to keep in moodledata/mirror/ -----------------------
-KEEP_DUMPS=3
-
-# --- Rsync exclusions (relative to moodledata root) --------------------------
-# The DUMP_SUBDIR is always included (not excluded).
-RSYNC_EXCLUDES=(
-    "cache/"
-    "localcache/"
-    "temp/"
-    "sessions/"
-    "trashdir/"
-    "lock/"
-    "filedir/antivirus_quarantine/"
-)
-
-# --- Notify on failure (requires sendmail/mail on production) ----------------
-NOTIFY_EMAIL="admin@example.com"
-NOTIFY_ON_FAILURE=true
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
 
 # =============================================================================
-# END OF CONFIGURATION — do not edit below unless you know what you are doing
+# SECTION 2: CONFIG VALIDATION
 # =============================================================================
+require_config_var() {
+    local varname="$1"
+    if [[ -z "${!varname:-}" ]]; then
+        echo "ERROR: Required config variable '$varname' is missing or empty in: $CONFIG_FILE" >&2
+        exit 1
+    fi
+}
+
+validate_config() {
+    require_config_var "PROD_MOODLE_ROOT"
+    require_config_var "PROD_PHP_CLI"
+
+    require_config_var "TEST_HOST"
+    require_config_var "TEST_SSH_USER"
+    require_config_var "TEST_SSH_PORT"
+
+    require_config_var "TEST_MOODLE_ROOT"
+    require_config_var "TEST_MOODLEDATA"
+    require_config_var "TEST_PHP_CLI"
+
+    require_config_var "TEST_DB_TYPE"
+    require_config_var "TEST_DB_HOST"
+    require_config_var "TEST_DB_PORT"
+    require_config_var "TEST_DB_NAME"
+    require_config_var "TEST_DB_USER"
+    require_config_var "TEST_DB_PASS"
+
+    require_config_var "DUMP_SUBDIR"
+    require_config_var "REPLACE_SHORTEN"
+    require_config_var "LOG_MAX_BYTES"
+    require_config_var "LOCK_FILE"
+    require_config_var "KEEP_DUMPS"
+    require_config_var "NOTIFY_ON_FAILURE"
+
+    if ! declare -p SSH_EXTRA_OPTS >/dev/null 2>&1; then
+        echo "ERROR: Required config variable 'SSH_EXTRA_OPTS' must be defined as an array in: $CONFIG_FILE" >&2
+        exit 1
+    fi
+
+    if ! declare -p RSYNC_EXCLUDES >/dev/null 2>&1; then
+        echo "ERROR: Required config variable 'RSYNC_EXCLUDES' must be defined as an array in: $CONFIG_FILE" >&2
+        exit 1
+    fi
+}
+
+validate_config
 
 
 # =============================================================================
-# SECTION 2: ARGUMENT PARSING
+# SECTION 3: ARGUMENT PARSING
 # =============================================================================
 DRY_RUN=false
 FILES_ONLY=false
@@ -139,7 +122,7 @@ done
 
 
 # =============================================================================
-# SECTION 3: LOGGING
+# SECTION 4: LOGGING
 # =============================================================================
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -170,7 +153,7 @@ die() {
 
 
 # =============================================================================
-# SECTION 4: NOTIFICATIONS
+# SECTION 5: NOTIFICATIONS
 # =============================================================================
 send_failure_notification() {
     [[ "${NOTIFY_ON_FAILURE}" == "true" ]] || return 0
@@ -184,7 +167,7 @@ send_failure_notification() {
 
 
 # =============================================================================
-# SECTION 5: LOCK
+# SECTION 6: LOCK
 # =============================================================================
 acquire_lock() {
     if [[ -f "$LOCK_FILE" ]]; then
@@ -207,7 +190,7 @@ release_lock() {
 
 
 # =============================================================================
-# SECTION 6: CLEANUP + TRAPS
+# SECTION 7: CLEANUP + TRAPS
 # =============================================================================
 TEMP_DIR=""   # set after we know PROD_MOODLEDATA
 
@@ -231,7 +214,7 @@ trap 'warn "Signal received. Cleaning up."; cleanup; exit 130' INT TERM
 
 
 # =============================================================================
-# SECTION 7: READ CONFIG FROM MOODLE config.php
+# SECTION 8: READ CONFIG FROM MOODLE config.php
 # =============================================================================
 extract_cfg() {
     local property="$1"
@@ -323,7 +306,7 @@ load_moodle_config() {
     info "DB user    : $PROD_DB_USER"
     info "moodledata : $PROD_MOODLEDATA"
     info "wwwroot    : $PROD_WWWROOT"
-    info "Moodle ver : $PROD_MOODLE_VERSION ($PROD_MOODLE_RELEASE)"
+    info "Moodle ver : $PROD_MOODLE_VERSION (${PROD_MOODLE_RELEASE:-unknown})"
 }
 
 apply_overrides() {
@@ -354,7 +337,7 @@ apply_overrides() {
 
 
 # =============================================================================
-# SECTION 8: COMPATIBILITY CHECK
+# SECTION 9: COMPATIBILITY CHECK
 #
 # Compares production vs test for:
 #   - Moodle core version (downgrade detection)
@@ -388,18 +371,18 @@ compatibility_check() {
 
     local test_version test_release
     test_version=$(
-      remote_exec_capture "grep -E '^[[:space:]]*\\\$version[[:space:]]*=' '${TEST_MOODLE_ROOT}/version.php' \
-        | head -n1 \
-        | sed -nE 's/^[[:space:]]*\\\$version[[:space:]]*=[[:space:]]*([0-9.]+);.*$/\1/p'"
+        remote_exec_capture "grep -E '^[[:space:]]*\\\$version[[:space:]]*=' '${TEST_MOODLE_ROOT}/version.php' \
+            | head -n1 \
+            | sed -nE 's/^[[:space:]]*\\\$version[[:space:]]*=[[:space:]]*([0-9.]+);.*$/\1/p'"
     )
 
     test_release=$(
-      remote_exec_capture "grep -E '^[[:space:]]*\\\$release[[:space:]]*=' '${TEST_MOODLE_ROOT}/version.php' \
-        | head -n1 \
-        | sed -nE \"s/^[[:space:]]*\\\$release[[:space:]]*=[[:space:]]*'(.*)';.*$/\\1/p\""
+        remote_exec_capture "grep -E '^[[:space:]]*\\\$release[[:space:]]*=' '${TEST_MOODLE_ROOT}/version.php' \
+            | head -n1 \
+            | sed -nE \"s/^[[:space:]]*\\\$release[[:space:]]*=[[:space:]]*'(.*)';.*$/\\1/p\""
     )
 
-    info "Production core : $PROD_MOODLE_VERSION ($PROD_MOODLE_RELEASE)"
+    info "Production core : $PROD_MOODLE_VERSION (${PROD_MOODLE_RELEASE:-unknown})"
     info "Test core       : ${test_version:-unknown} (${test_release:-unknown})"
 
     local prod_core_num test_core_num
@@ -408,8 +391,10 @@ compatibility_check() {
 
     if [[ -z "$test_version" ]]; then
         issues+=("Could not read test Moodle version from ${TEST_MOODLE_ROOT}/version.php")
+    elif [[ -z "$prod_core_num" || -z "$test_core_num" ]]; then
+        issues+=("Could not normalise Moodle core versions for comparison (prod='${PROD_MOODLE_VERSION}', test='${test_version}')")
     elif [[ "$prod_core_num" -lt "$test_core_num" ]]; then
-        issues+=("CORE DOWNGRADE: Production ($PROD_MOODLE_VERSION / $PROD_MOODLE_RELEASE) is OLDER than Test ($test_version / $test_release). Importing would downgrade the test database schema.")
+        issues+=("CORE DOWNGRADE: Production ($PROD_MOODLE_VERSION / ${PROD_MOODLE_RELEASE:-unknown}) is OLDER than Test ($test_version / ${test_release:-unknown}). Importing would downgrade the test database schema.")
     elif [[ "$prod_core_num" -eq "$test_core_num" ]]; then
         info "Core version match: OK"
     else
@@ -599,7 +584,7 @@ get_test_plugin_versions() {
 
 
 # =============================================================================
-# SECTION 9: PREFLIGHT
+# SECTION 10: PREFLIGHT
 # =============================================================================
 preflight() {
     section "Preflight checks"
@@ -651,7 +636,7 @@ preflight() {
 
 
 # =============================================================================
-# SECTION 10: SSH HELPERS
+# SECTION 11: SSH HELPERS
 # =============================================================================
 ssh_target() {
     if [[ -n "$TEST_SSH_HOST_ALIAS" ]]; then
@@ -687,7 +672,7 @@ remote_exec_capture() {
 
 
 # =============================================================================
-# SECTION 11: DUMP PRODUCTION DATABASE
+# SECTION 12: DUMP PRODUCTION DATABASE
 # =============================================================================
 dump_prod_db() {
     section "Dumping production database"
@@ -758,7 +743,7 @@ dump_prod_db() {
 
 
 # =============================================================================
-# SECTION 12: SYNC MOODLEDATA
+# SECTION 13: SYNC MOODLEDATA
 # =============================================================================
 sync_moodledata() {
     section "Syncing moodledata to test server"
@@ -811,7 +796,7 @@ sync_dump_only() {
 
 
 # =============================================================================
-# SECTION 13: POST-IMPORT (executed on test server via SSH heredoc)
+# SECTION 14: POST-IMPORT (executed on test server via SSH heredoc)
 #
 # URL replacement uses admin/tool/replace/cli/replace.php which correctly
 # handles serialised PHP data, JSON, and plain strings in all DB tables.
@@ -1091,7 +1076,7 @@ ENDSSH
 
 
 # =============================================================================
-# SECTION 14: SUMMARY
+# SECTION 15: SUMMARY
 # =============================================================================
 print_summary() {
     local end duration mins secs
@@ -1114,16 +1099,20 @@ print_summary() {
     fi
 
     info "Log          : $LOG_FILE"
+    info "Config       : $CONFIG_FILE"
 }
 
 
 # =============================================================================
-# SECTION 15: MAIN
+# SECTION 16: MAIN
 # =============================================================================
 SCRIPT_START=$(date +%s)
 
 main() {
     section "Moodle Mirror: Production → Test ($(date))"
+    info "Script dir   : $SCRIPT_DIR"
+    info "Config file  : $CONFIG_FILE"
+    info "Log file     : $LOG_FILE"
     [[ "$DRY_RUN"    == "true" ]] && info "*** DRY RUN MODE ***"
     [[ "$FILES_ONLY" == "true" ]] && info "*** FILES ONLY ***"
     [[ "$DB_ONLY"    == "true" ]] && info "*** DB ONLY ***"
