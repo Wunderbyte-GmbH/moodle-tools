@@ -748,11 +748,12 @@ dump_prod_db() {
 sync_moodledata() {
     section "Syncing moodledata to test server"
 
-    local exclude_args=()
+    local filter_args=()
     for excl in "${RSYNC_EXCLUDES[@]}"; do
-        exclude_args+=("--exclude=${excl}")
+        filter_args+=("--filter=protect ${excl}")
+        filter_args+=("--exclude=${excl}")
     done
-    exclude_args+=("--include=${DUMP_SUBDIR}/")
+    filter_args+=("--include=${DUMP_SUBDIR}/")
 
     local dry_flag=()
     [[ "$DRY_RUN" == "true" ]] && dry_flag=("--dry-run")
@@ -766,12 +767,11 @@ sync_moodledata() {
         --archive \
         --compress \
         --delete \
-        --delete-excluded \
         --human-readable \
         --stats \
         --rsh="$rsync_ssh" \
         "${dry_flag[@]}" \
-        "${exclude_args[@]}" \
+        "${filter_args[@]}" \
         "${PROD_MOODLEDATA}/" \
         "$(ssh_target):${TEST_MOODLEDATA}/" \
         2>&1 | tee -a "$LOG_FILE"
