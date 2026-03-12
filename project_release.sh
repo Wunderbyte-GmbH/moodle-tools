@@ -447,12 +447,6 @@ git_cmd "add ."
 git_cmd "commit --amend --no-edit"
 
 # Push to the desired branch with force
-# Only push to project_lowercase if it exists
-if check_remote_exists "${project_lowercase}"; then
-    git_push "${project_lowercase}" "$PROJECT_STABLE" "-f"
-else
-    echo "Remote ${project_lowercase} does not exist, skipping push to it."
-fi
 git_push "wunderbyte" "$PROJECT_STABLE" "-f"
 
 # Prompt for the commit message
@@ -546,8 +540,6 @@ fi
 # Create a tag
 git_tag $releasetag "Release information"
 
-# Push to the desired branch with tags
-#git_push "wunderbyte" "$PROJECT_ALLINONE" "--tags"
 # push the branch
 git_push "wunderbyte" "$PROJECT_ALLINONE"
 
@@ -557,7 +549,6 @@ git push wunderbyte "refs/tags/$releasetag"
 
 # Only push to project_lowercase if it exists
 if check_remote_exists "${project_lowercase}"; then
-    #git_push "${project_lowercase}" "$PROJECT_ALLINONE" "--tags"
     git_push "${project_lowercase}" "$PROJECT_ALLINONE"
     echo "Pushing tag: $releasetag to ${project_lowercase}"
     git push "${project_lowercase}" "refs/tags/$releasetag"
