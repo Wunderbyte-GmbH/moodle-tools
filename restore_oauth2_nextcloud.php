@@ -12,6 +12,14 @@ echo "Step 2: Loading necessary libraries...\n";
 require_once($CFG->libdir . '/adminlib.php');
 require_once($CFG->libdir . '/authlib.php');
 
+$admin = get_admin();
+if (!$admin) {
+    echo "ERROR: No site admin user found.\n";
+    exit(1);
+}
+\core\session\manager::set_user($admin);
+echo "  Running as admin user: {$admin->username}\n";
+
 // =========================================================
 // Load config file
 // =========================================================
