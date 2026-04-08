@@ -683,7 +683,6 @@ dump_prod_db() {
     case "$PROD_DB_TYPE" in
         pgsql)
             DUMP_LOCAL_PATH="${TEMP_DIR}/db_${ts}.sql.gz"
-            local temp_sql="${TEMP_DIR}/db_${ts}.sql"
             info "Dumping (pg_dump plain SQL + gzip) -> $DUMP_LOCAL_PATH"
 
             export PGPASSWORD="$PROD_DB_PASS"
@@ -699,10 +698,8 @@ dump_prod_db() {
                 --no-acl \
                 --clean \
                 --if-exists \
-                > "$temp_sql" 2>>"$LOG_FILE"
+                | gzip -1 > "${DUMP_LOCAL_PATH}.inprogress"
 
-            gzip -1 < "$temp_sql" > "${DUMP_LOCAL_PATH}.inprogress"
-            rm -f "$temp_sql"
             unset PGPASSWORD
             ;;
 
