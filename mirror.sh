@@ -53,13 +53,33 @@ require_config_var() {
     fi
 }
 
+# Return 0 when the test site is on the same machine as production.
+# Recommended local config: leave TEST_HOST, TEST_SSH_USER and TEST_SSH_PORT empty.
+is_local_test_server() {
+    local host="${TEST_HOST:-}"
+
+    if [[ -z "$host" ]]; then
+        return 0
+    fi
+
+    case "$host" in
+        localhost|127.0.0.1|::1|"$(hostname)"|"$(hostname -f 2>/dev/null || true)")
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
 validate_config() {
     require_config_var "PROD_MOODLE_ROOT"
     require_config_var "PROD_PHP_CLI"
 
-    require_config_var "TEST_HOST"
-    require_config_var "TEST_SSH_USER"
-    require_config_var "TEST_SSH_PORT"
+    if ! is_local_test_server; then
+        require_config_var "TEST_HOST"
+        require_config_var "TEST_SSH_USER"
+        require_config_var "TEST_SSH_PORT"
+    fi
 
     require_config_var "TEST_MOODLE_ROOT"
     require_config_var "TEST_MOODLEDATA"
@@ -591,7 +611,9 @@ preflight() {
 
     [[ -d "$PROD_MOODLEDATA" ]] || die "Production moodledata not found: $PROD_MOODLEDATA"
 
-    command -v ssh   &>/dev/null || die "ssh not installed"
+    if ! is_local_test_server; then
+        command -v ssh &>/dev/null || die "ssh not installed"
+    fi
     command -v rsync &>/dev/null || die "rsync not installed"
 
     if [[ "$FILES_ONLY" != "true" ]]; then
@@ -603,9 +625,15 @@ preflight() {
         esac
     fi
 
-    info "Testing SSH to test server..."
-    remote_exec "echo 'SSH OK'" \
-        || die "Cannot SSH to test server."
+    if is_local_test_server; then
+        info "Testing local test target..."
+        remote_exec "echo 'LOCAL OK'" \
+            || die "Cannot execute local test command."
+    else
+        info "Testing SSH to test server..."
+        remote_exec "echo 'SSH OK'" \
+            || die "Cannot SSH to test server."
+    fi
 
     remote_exec "[[ -f '${TEST_MOODLE_ROOT}/config.php' ]]" \
         || die "Test config.php not found remotely: ${TEST_MOODLE_ROOT}/config.php"
@@ -660,14 +688,22 @@ ssh_base() {
         "$@"
 }
 
-# Execute a remote command, streaming output to log and stdout.
+# Execute command on test target, local or remote.
 remote_exec() {
-    ssh_base "$@" 2>&1 | tee -a "$LOG_FILE"
+    if is_local_test_server; then
+        bash -lc "$*" 2>&1 | tee -a "$LOG_FILE"
+    else
+        ssh_base "$@" 2>&1 | tee -a "$LOG_FILE"
+    fi
 }
 
-# Execute a remote command, capturing stdout only (no tee — for parsing).
+# Execute command on test target, capturing stdout only.
 remote_exec_capture() {
-    ssh_base "$@" 2>/dev/null
+    if is_local_test_server; then
+        bash -lc "$*" 2>/dev/null
+    else
+        ssh_base "$@" 2>/dev/null
+    fi
 }
 
 
@@ -683,12 +719,16 @@ dump_prod_db() {
     case "$PROD_DB_TYPE" in
         pgsql)
             DUMP_LOCAL_PATH="${TEMP_DIR}/db_${ts}.sql.gz"
-            info "Dumping (pg_dump plain SQL + gzip) -> $DUMP_LOCAL_PATH"
+            DUMP_SQL_PATH="${TEMP_DIR}/db_${ts}.sql"
+            info "Dumping PostgreSQL in smaller sections -> $DUMP_LOCAL_PATH"
 
             export PGPASSWORD="$PROD_DB_PASS"
             export LC_ALL="en_US.UTF-8"
             export LANG="en_US.UTF-8"
 
+            : > "${DUMP_SQL_PATH}.inprogress"
+
+            info "Dumping PostgreSQL pre-data/schema..."
             pg_dump \
                 -h "$PROD_DB_HOST" \
                 -p "$PROD_DB_PORT" \
@@ -698,14 +738,59 @@ dump_prod_db() {
                 --no-acl \
                 --clean \
                 --if-exists \
-                | gzip -1 > "${DUMP_LOCAL_PATH}.inprogress"
+                --section=pre-data \
+                >> "${DUMP_SQL_PATH}.inprogress"
+
+            info "Dumping PostgreSQL table data one table at a time..."
+            PGPASSWORD="$PROD_DB_PASS" psql \
+                -h "$PROD_DB_HOST" \
+                -p "$PROD_DB_PORT" \
+                -U "$PROD_DB_USER" \
+                -d "$PROD_DB_NAME" \
+                -t -A \
+                -c "SELECT quote_ident(schemaname) || '.' || quote_ident(tablename)
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                    ORDER BY tablename;" \
+                | while IFS= read -r table; do
+                    [[ -n "$table" ]] || continue
+                    info "Dumping table data: $table"
+                    pg_dump \
+                        -h "$PROD_DB_HOST" \
+                        -p "$PROD_DB_PORT" \
+                        -U "$PROD_DB_USER" \
+                        -d "$PROD_DB_NAME" \
+                        --no-owner \
+                        --no-acl \
+                        --data-only \
+                        --disable-triggers \
+                        --table="$table" \
+                        >> "${DUMP_SQL_PATH}.inprogress"
+                done
+
+            info "Dumping PostgreSQL post-data/indexes/constraints..."
+            pg_dump \
+                -h "$PROD_DB_HOST" \
+                -p "$PROD_DB_PORT" \
+                -U "$PROD_DB_USER" \
+                -d "$PROD_DB_NAME" \
+                --no-owner \
+                --no-acl \
+                --section=post-data \
+                >> "${DUMP_SQL_PATH}.inprogress"
 
             unset PGPASSWORD
+
+            mv "${DUMP_SQL_PATH}.inprogress" "$DUMP_SQL_PATH"
+            gzip -1 "$DUMP_SQL_PATH"
+            mv "${DUMP_SQL_PATH}.gz" "${DUMP_LOCAL_PATH}.inprogress"
             ;;
 
         mariadb|mysql)
             DUMP_LOCAL_PATH="${TEMP_DIR}/db_${ts}.sql.gz"
             info "Dumping (mysqldump + gzip) -> $DUMP_LOCAL_PATH"
+
+            DUMP_SQL_PATH="${TEMP_DIR}/db_${ts}.sql"
 
             mysqldump \
                 -h "$PROD_DB_HOST" \
@@ -720,8 +805,12 @@ dump_prod_db() {
                 --triggers \
                 --events \
                 "$PROD_DB_NAME" \
-                2>>"$LOG_FILE" \
-                | gzip -1 > "${DUMP_LOCAL_PATH}.inprogress"
+                > "${DUMP_SQL_PATH}.inprogress" \
+                2>>"$LOG_FILE"
+
+            mv "${DUMP_SQL_PATH}.inprogress" "$DUMP_SQL_PATH"
+            gzip -1 "$DUMP_SQL_PATH"
+            mv "${DUMP_SQL_PATH}.gz" "${DUMP_LOCAL_PATH}.inprogress"
             ;;
     esac
 
@@ -755,23 +844,37 @@ sync_moodledata() {
     local dry_flag=()
     [[ "$DRY_RUN" == "true" ]] && dry_flag=("--dry-run")
 
-    local rsync_ssh="ssh -p ${TEST_SSH_PORT} -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
-    if [[ ${#SSH_EXTRA_OPTS[@]} -gt 0 ]]; then
-        rsync_ssh+=" $(printf '%q ' "${SSH_EXTRA_OPTS[@]}")"
-    fi
+    if is_local_test_server; then
+        info "Using local rsync: ${PROD_MOODLEDATA}/ -> ${TEST_MOODLEDATA}/"
+        rsync \
+            --archive \
+            --delete \
+            --human-readable \
+            --stats \
+            "${dry_flag[@]}" \
+            "${filter_args[@]}" \
+            "${PROD_MOODLEDATA}/" \
+            "${TEST_MOODLEDATA}/" \
+            2>&1 | tee -a "$LOG_FILE"
+    else
+        local rsync_ssh="ssh -p ${TEST_SSH_PORT} -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
+        if [[ ${#SSH_EXTRA_OPTS[@]} -gt 0 ]]; then
+            rsync_ssh+=" $(printf '%q ' "${SSH_EXTRA_OPTS[@]}")"
+        fi
 
-    rsync \
-        --archive \
-        --compress \
-        --delete \
-        --human-readable \
-        --stats \
-        --rsh="$rsync_ssh" \
-        "${dry_flag[@]}" \
-        "${filter_args[@]}" \
-        "${PROD_MOODLEDATA}/" \
-        "$(ssh_target):${TEST_MOODLEDATA}/" \
-        2>&1 | tee -a "$LOG_FILE"
+        rsync \
+            --archive \
+            --compress \
+            --delete \
+            --human-readable \
+            --stats \
+            --rsh="$rsync_ssh" \
+            "${dry_flag[@]}" \
+            "${filter_args[@]}" \
+            "${PROD_MOODLEDATA}/" \
+            "$(ssh_target):${TEST_MOODLEDATA}/" \
+            2>&1 | tee -a "$LOG_FILE"
+    fi
 
     info "moodledata rsync complete"
 }
@@ -779,18 +882,27 @@ sync_moodledata() {
 sync_dump_only() {
     section "Syncing DB dump only to test server"
 
-    rsync \
-        --archive \
-        --compress \
-        --human-readable \
-        --rsh="ssh -p ${TEST_SSH_PORT} -o StrictHostKeyChecking=accept-new -o BatchMode=yes" \
-        "$DUMP_LOCAL_PATH" \
-        "$(ssh_target):${TEST_MOODLEDATA}/${DUMP_SUBDIR}/" \
-        2>&1 | tee -a "$LOG_FILE"
+    if is_local_test_server; then
+        mkdir -p "${TEST_MOODLEDATA}/${DUMP_SUBDIR}"
+        rsync \
+            --archive \
+            --human-readable \
+            "$DUMP_LOCAL_PATH" \
+            "${TEST_MOODLEDATA}/${DUMP_SUBDIR}/" \
+            2>&1 | tee -a "$LOG_FILE"
+    else
+        rsync \
+            --archive \
+            --compress \
+            --human-readable \
+            --rsh="ssh -p ${TEST_SSH_PORT} -o StrictHostKeyChecking=accept-new -o BatchMode=yes" \
+            "$DUMP_LOCAL_PATH" \
+            "$(ssh_target):${TEST_MOODLEDATA}/${DUMP_SUBDIR}/" \
+            2>&1 | tee -a "$LOG_FILE"
+    fi
 
     info "DB dump rsync complete"
 }
-
 
 # =============================================================================
 # SECTION 14: POST-IMPORT (executed on test server via SSH heredoc)
@@ -818,8 +930,8 @@ run_post_import() {
         replace_extra_opts+=" --shorten"
     fi
 
-    ssh_base \
-        "TEST_MOODLE_ROOT=$(printf '%q' "$TEST_MOODLE_ROOT") \
+    local post_import_env
+    post_import_env="TEST_MOODLE_ROOT=$(printf '%q' "$TEST_MOODLE_ROOT") \
          TEST_MOODLEDATA=$(printf '%q' "$TEST_MOODLEDATA") \
          TEST_PHP_CLI=$(printf '%q' "$TEST_PHP_CLI") \
          TEST_DB_TYPE=$(printf '%q' "$TEST_DB_TYPE") \
@@ -831,7 +943,11 @@ run_post_import() {
          PROD_WWWROOT=$(printf '%q' "$PROD_WWWROOT") \
          REPLACE_EXTRA_OPTS=$(printf '%q' "$replace_extra_opts") \
          DUMP_PATH=$(printf '%q' "$remote_dump") \
-         bash -s" <<'ENDSSH' 2>&1 | tee -a "$LOG_FILE"
+         bash -s"
+
+    local post_import_script
+    post_import_script="$(mktemp)"
+    cat > "$post_import_script" <<'ENDSSH'
 set -euo pipefail
 
 LOG="/tmp/moodle_mirror_postimport_$$.log"
@@ -1049,6 +1165,13 @@ log_r "Disabling maintenance mode..."
 log_r "=== Post-import complete ==="
 ENDSSH
 
+    if is_local_test_server; then
+        bash -lc "$post_import_env" < "$post_import_script" 2>&1 | tee -a "$LOG_FILE"
+    else
+        ssh_base "$post_import_env" < "$post_import_script" 2>&1 | tee -a "$LOG_FILE"
+    fi
+    rm -f "$post_import_script"
+
     info "Post-import finished"
 }
 
@@ -1091,6 +1214,11 @@ main() {
     info "Script dir   : $SCRIPT_DIR"
     info "Config file  : $CONFIG_FILE"
     info "Log file     : $LOG_FILE"
+    if is_local_test_server; then
+        info "Test target  : local filesystem"
+    else
+        info "Test target  : $(ssh_target)"
+    fi
     [[ "$DRY_RUN"    == "true" ]] && info "*** DRY RUN MODE ***"
     [[ "$FILES_ONLY" == "true" ]] && info "*** FILES ONLY ***"
     [[ "$DB_ONLY"    == "true" ]] && info "*** DB ONLY ***"
