@@ -40,6 +40,8 @@ SUBMODULES=(
     "local/wko_connect:moodle-local_wko_connect.git"
     "blocks/handout:moodle-block_handout.git"
     "local/handoutpdf:moodle-local_handoutpdf.git"
+    "mod/quiz/accessrule/endwarning:accessrule_endwarning.git"
+    "local/sebcourse:local_sebcourse.git"
 )
 
 # Root URL for WKO repositories
