@@ -57,28 +57,28 @@ for submodule_entry in "${SUBMODULES[@]}"; do
     SUBMODULE_PATH="${submodule_entry%:*}"
     REPO_FILE="${submodule_entry#*:}"
     NEW_URL="${NEW_ROOT_URL}${REPO_FILE}"
-    
+
     echo ""
     echo "--- Processing: $SUBMODULE_PATH ---"
-    
+
     if [ -d "$SUBMODULE_PATH" ]; then
         (
             cd "$SUBMODULE_PATH" || exit 1
-            
+
             # Configure push URL
             echo "  Setting push URL: $NEW_URL"
             git config remote.origin.pushurl "$NEW_URL"
-            
+
             # Show current state
             current_commit=$(git rev-parse HEAD)
             echo "  Current commit: $current_commit"
-            
+
             # Push with force (since force push is enabled)
             echo "  Pushing to remote..."
-            echo "  Command: git push --force origin HEAD:main"
-            git push --force origin HEAD:main
+            echo "  Command: git push --force origin HEAD:refs/heads/main"
+            git push --force origin HEAD:refs/heads/main
             push_exit_code=$?
-            
+
             if [ $push_exit_code -eq 0 ]; then
                 echo "  ✓ Successfully pushed"
                 exit 0
@@ -87,7 +87,7 @@ for submodule_entry in "${SUBMODULES[@]}"; do
                 exit 1
             fi
         )
-        
+
         if [ $? -eq 0 ]; then
             successful=$((successful + 1))
         else
