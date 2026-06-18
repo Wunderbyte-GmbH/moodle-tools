@@ -42,6 +42,8 @@ SUBMODULES=(
     "local/handoutpdf:moodle-local_handoutpdf.git"
     "mod/quiz/accessrule/endwarning:accessrule_endwarning.git"
     "local/sebcourse:local_sebcourse.git"
+    "question/type/mcbonusmalus:moodle-qtype_mcbonusmalus.git"
+    "question/type/formulaonimage:moodle-qtype_formulaonimage.git"
 )
 
 # Root URL for WKO repositories
