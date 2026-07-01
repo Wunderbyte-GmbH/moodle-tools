@@ -392,21 +392,21 @@ cleanup_local_tags
 
 git_cmd "switch -f $PROJECT_STABLE"
 git_cmd "reset --hard wunderbyte/$PROJECT_STABLE"
-git_cmd "submodule sync"
+git_cmd "submodule sync --recursive"
 
 # Remove the directories of the submodules to do a clean checkout
 git config -f .gitmodules --get-regexp path |
 while read -r _ path; do
-  if [ ! -d "$path" ]; then
-    echo "Skipping: $path does not exist."
-    continue
-  fi
+  echo "Cleaning submodule: $path"
 
+  git submodule deinit -f -- "$path" || true
   echo "Deleting directory: $path"
+  rm -rf ".git/modules/$path"
   rm -rf "$path"
 done
 
 # Update submodules
+git_cmd "submodule sync --recursive"
 git_cmd "submodule update --remote --init --recursive -f"
 
 # Check git status
@@ -487,8 +487,8 @@ echo "Executing: git archive -o ../release.zip HEAD"
 git archive -o ../release.zip HEAD
 
 # Zip submodule directories
-echo "Executing: git submodule --quiet foreach 'cd \$toplevel; zip -ru ../release.zip \$sm_path'"
-git submodule --quiet foreach 'cd $toplevel; zip -ru ../release.zip $sm_path'
+echo "Executing: git submodule --quiet foreach --recursive 'cd \$toplevel; zip -ru ../release.zip \$sm_path'"
+git submodule --quiet foreach --recursive 'cd $toplevel; zip -ru ../release.zip $sm_path'
 
 # Switch to the desired branch
 git_cmd "switch -f -C $PROJECT_ALLINONE --track wunderbyte/$PROJECT_ALLINONE"
@@ -522,8 +522,8 @@ rm .gitmodules .git/modules/* -rf
 echo "Executing: find . -name \".git\" -type f -delete"
 find . -name ".git" -type f -delete
 
-# Add all changes
-git_cmd "add ."
+# Add all changes, including ignored plugin/submodule files
+git_cmd "add -A -f"
 
 # Commit the changes only if there are changes
 if [[ -n $(git status -s) ]]; then
