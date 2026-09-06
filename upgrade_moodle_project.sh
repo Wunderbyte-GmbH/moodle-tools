@@ -104,6 +104,7 @@ read_config() {
         local db_name
         local db_user
         local db_pass
+        local db_port
         local data_root
         local www_root
         db_type=$(sed -nE 's/^[[:space:]]*\$CFG->dbtype\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
@@ -113,6 +114,13 @@ read_config() {
         db_pass=$(sed -nE 's/^[[:space:]]*\$CFG->dbpass\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
         data_root=$(sed -nE 's/^[[:space:]]*\$CFG->dataroot\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
         www_root=$(sed -nE 's/^[[:space:]]*\$CFG->wwwroot\s*=\s*['\''"](.+)['\''"].*$/\1/p' "$config_file")
+
+        # dbport is usually nested inside $CFG->dboptions = array('dbport' => 5551, ...);
+        db_port=$(grep -oE "'dbport'[[:space:]]*=>[[:space:]]*[0-9]+" "$config_file" | grep -oE '[0-9]+$')
+        if [[ -z "$db_port" ]]; then
+            # Fall back to a direct $CFG->dbport = 'xxxx'; assignment, just in case
+            db_port=$(sed -nE "s/^[[:space:]]*\\\$CFG->dbport\\s*=\\s*['\"]?([0-9]+)['\"]?.*\$/\\1/p" "$config_file")
+        fi
 
         # If we still don't have values, fail
         if [[ -z "$db_type" || -z "$db_name" ]]; then
@@ -126,6 +134,7 @@ read_config() {
         config_values+="export MOODLE_DBNAME=\"$db_name\";\n"
         config_values+="export MOODLE_DBUSER=\"$db_user\";\n"
         config_values+="export MOODLE_DBPASS=\"$db_pass\";\n"
+        config_values+="export MOODLE_DBPORT=\"$db_port\";\n"
         config_values+="export MOODLE_DATAROOT=\"$data_root\";\n"
         config_values+="export MOODLE_WWWROOT=\"$www_root\";\n"
 
@@ -143,7 +152,7 @@ read_config() {
     fi
 
     echo "Successfully loaded Moodle configuration."
-    echo "Database type: $MOODLE_DBTYPE, Host: $MOODLE_DBHOST, Database: $MOODLE_DBNAME, User:$MOODLE_DBUSER"
+    echo "Database type: $MOODLE_DBTYPE, Host: $MOODLE_DBHOST, Port: ${MOODLE_DBPORT:-default}, Database: $MOODLE_DBNAME, User:$MOODLE_DBUSER"
 
     # Set up backup dirroot path
     if [[ -n "$MOODLE_DATAROOT" ]]; then
@@ -374,12 +383,16 @@ create_database_backup() {
         "mysqli"|"mariadb")
             if command -v mysqldump &> /dev/null; then
                 echo "Creating MySQL database backup..."
+                local mysql_port_arg=()
+                if [[ -n "$MOODLE_DBPORT" ]]; then
+                    mysql_port_arg=(-P "$MOODLE_DBPORT")
+                fi
                 if command -v gzip &> /dev/null; then
-                    if mysqldump -h "$MOODLE_DBHOST" -u "$MOODLE_DBUSER" -p"$MOODLE_DBPASS" "$MOODLE_DBNAME" --single-transaction | gzip > "$backup_file"; then
+                    if mysqldump -h "$MOODLE_DBHOST" "${mysql_port_arg[@]}" -u "$MOODLE_DBUSER" -p"$MOODLE_DBPASS" "$MOODLE_DBNAME" --single-transaction | gzip > "$backup_file"; then
                         backup_success=true
                     fi
                 else
-                    if mysqldump -h "$MOODLE_DBHOST" -u "$MOODLE_DBUSER" -p"$MOODLE_DBPASS" "$MOODLE_DBNAME" --single-transaction > "$backup_file"; then
+                    if mysqldump -h "$MOODLE_DBHOST" "${mysql_port_arg[@]}" -u "$MOODLE_DBUSER" -p"$MOODLE_DBPASS" "$MOODLE_DBNAME" --single-transaction > "$backup_file"; then
                         backup_success=true
                     fi
                 fi
@@ -392,12 +405,16 @@ create_database_backup() {
             if command -v pg_dump &> /dev/null; then
                 echo "Creating PostgreSQL database backup..."
                 export PGPASSWORD="$MOODLE_DBPASS"
+                local psql_port_arg=()
+                if [[ -n "$MOODLE_DBPORT" ]]; then
+                    psql_port_arg=(-p "$MOODLE_DBPORT")
+                fi
                 if command -v gzip &> /dev/null; then
-                    if pg_dump -h "$MOODLE_DBHOST" -U "$MOODLE_DBUSER" -d "$MOODLE_DBNAME" | gzip > "$backup_file"; then
+                    if pg_dump -h "$MOODLE_DBHOST" "${psql_port_arg[@]}" -U "$MOODLE_DBUSER" -d "$MOODLE_DBNAME" | gzip > "$backup_file"; then
                         backup_success=true
                     fi
                 else
-                    if pg_dump -h "$MOODLE_DBHOST" -U "$MOODLE_DBUSER" -d "$MOODLE_DBNAME" > "$backup_file"; then
+                    if pg_dump -h "$MOODLE_DBHOST" "${psql_port_arg[@]}" -U "$MOODLE_DBUSER" -d "$MOODLE_DBNAME" > "$backup_file"; then
                         backup_success=true
                     fi
                 fi
@@ -768,7 +785,11 @@ verify_upgrade_success() {
     case "$MOODLE_DBTYPE" in
         "mysqli"|"mariadb")
             if command -v mysql &> /dev/null; then
-                db_version=$(mysql -h "$MOODLE_DBHOST" -u "$MOODLE_DBUSER" -p"$MOODLE_DBPASS" -D "$MOODLE_DBNAME" -N -s -e "SELECT value FROM mdl_config WHERE name='version';" 2>&1)
+                local mysql_port_arg=()
+                if [[ -n "$MOODLE_DBPORT" ]]; then
+                    mysql_port_arg=(-P "$MOODLE_DBPORT")
+                fi
+                db_version=$(mysql -h "$MOODLE_DBHOST" "${mysql_port_arg[@]}" -u "$MOODLE_DBUSER" -p"$MOODLE_DBPASS" -D "$MOODLE_DBNAME" -N -s -e "SELECT value FROM mdl_config WHERE name='version';" 2>&1)
             else
                 echo "ERROR: mysql client not found"
                 return 1
@@ -777,7 +798,11 @@ verify_upgrade_success() {
         "pgsql")
             if command -v psql &> /dev/null; then
                 export PGPASSWORD="$MOODLE_DBPASS"
-                db_version=$(psql -h "$MOODLE_DBHOST" -U "$MOODLE_DBUSER" -d "$MOODLE_DBNAME" -t -c "SELECT value FROM mdl_config WHERE name='version';" 2>&1 | xargs)
+                local psql_port_arg=()
+                if [[ -n "$MOODLE_DBPORT" ]]; then
+                    psql_port_arg=(-p "$MOODLE_DBPORT")
+                fi
+                db_version=$(psql -h "$MOODLE_DBHOST" "${psql_port_arg[@]}" -U "$MOODLE_DBUSER" -d "$MOODLE_DBNAME" -t -c "SELECT value FROM mdl_config WHERE name='version';" 2>&1 | xargs)
                 unset PGPASSWORD
             else
                 echo "ERROR: psql client not found"
