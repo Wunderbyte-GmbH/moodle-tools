@@ -128,22 +128,23 @@ read_config() {
             return 1
         fi
 
-        # Create export statements
-        config_values="export MOODLE_DBTYPE=\"$db_type\";\n"
-        config_values+="export MOODLE_DBHOST=\"$db_host\";\n"
-        config_values+="export MOODLE_DBNAME=\"$db_name\";\n"
-        config_values+="export MOODLE_DBUSER=\"$db_user\";\n"
-        config_values+="export MOODLE_DBPASS=\"$db_pass\";\n"
-        config_values+="export MOODLE_DBPORT=\"$db_port\";\n"
-        config_values+="export MOODLE_DATAROOT=\"$data_root\";\n"
-        config_values+="export MOODLE_WWWROOT=\"$www_root\";\n"
+        MOODLE_DBTYPE="$db_type"
+        MOODLE_DBHOST="$db_host"
+        MOODLE_DBNAME="$db_name"
+        MOODLE_DBUSER="$db_user"
+        MOODLE_DBPASS="$db_pass"
+        MOODLE_DATAROOT="$data_root"
+        MOODLE_WWWROOT="$www_root"
 
-        echo "Alternative method extracted the following configuration:"
-        echo -e "$config_values" | grep -v "DBPASS"
+        export MOODLE_DBTYPE
+        export MOODLE_DBHOST
+        export MOODLE_DBNAME
+        export MOODLE_DBUSER
+        export MOODLE_DBPASS
+        export MOODLE_DATAROOT
+        export MOODLE_WWWROOT
+
     fi
-
-    # Evaluate the export statements to set all variables
-    eval "$(echo -e "$config_values" | grep -v "^#")"
 
     # Verify that critical variables were set
     if [[ -z "$MOODLE_DBTYPE" ]]; then
